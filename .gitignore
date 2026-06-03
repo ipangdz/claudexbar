@@ -12,3 +12,6 @@ notes/
 *.xcodeproj
 xcuserdata/
 *.xcuserstate
+
+# Release build output
+dist/

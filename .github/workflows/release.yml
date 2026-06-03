@@ -1,0 +1,33 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build universal app
+        run: VERSION="${GITHUB_REF_NAME#v}" scripts/build-app.sh dist
+
+      - name: Package
+        run: |
+          ditto -c -k --keepParent "dist/ClaudexBar.app" "ClaudexBar.zip"
+          shasum -a 256 "ClaudexBar.zip" | tee "ClaudexBar.zip.sha256"
+
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The release may already exist (created by scripts/release.sh). Create
+          # it if not, then attach the build artifacts.
+          if ! gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --generate-notes
+          fi
+          gh release upload "${GITHUB_REF_NAME}" "ClaudexBar.zip" "ClaudexBar.zip.sha256" --clobber
