@@ -31,3 +31,26 @@ jobs:
             gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --generate-notes
           fi
           gh release upload "${GITHUB_REF_NAME}" "ClaudexBar.zip" "ClaudexBar.zip.sha256" --clobber
+
+      - name: Update Homebrew cask
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "${TAP_TOKEN}" ]; then
+            echo "HOMEBREW_TAP_TOKEN not set — skipping cask auto-update."
+            exit 0
+          fi
+          VERSION="${GITHUB_REF_NAME#v}"
+          SHA="$(awk '{print $1}' ClaudexBar.zip.sha256)"
+          git clone --depth 1 "https://x-access-token:${TAP_TOKEN}@github.com/ipangdz/homebrew-tap.git" tap
+          sed -i '' -E "s/version \"[^\"]*\"/version \"${VERSION}\"/" tap/Casks/claudexbar.rb
+          sed -i '' -E "s/sha256 \"[^\"]*\"/sha256 \"${SHA}\"/" tap/Casks/claudexbar.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git commit -aqm "claudexbar ${VERSION}"; then
+            git push origin HEAD:main
+            echo "Updated cask to ${VERSION} (${SHA})."
+          else
+            echo "Cask already up to date."
+          fi
