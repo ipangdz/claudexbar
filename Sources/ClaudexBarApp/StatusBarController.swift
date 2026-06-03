@@ -67,7 +67,8 @@ final class StatusBarController: NSObject {
 
         // Re-render the pill when the system appearance (light/dark) changes.
         appearanceObservation = NSApp.observe(\.effectiveAppearance) { [weak self] _, _ in
-            DispatchQueue.main.async { self?.updateImage() }
+            guard let self else { return }
+            Task { @MainActor in self.updateImage() }
         }
     }
 
@@ -76,10 +77,12 @@ final class StatusBarController: NSObject {
         countdownTimer?.invalidate()
 
         refreshTimer = Timer.scheduledTimer(withTimeInterval: settings.refreshInterval, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.refreshAll() }
+            guard let self else { return }
+            Task { @MainActor in self.refreshAll() }
         }
         countdownTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.updateImage() }
+            guard let self else { return }
+            Task { @MainActor in self.updateImage() }
         }
     }
 
@@ -371,8 +374,8 @@ final class StatusBarController: NSObject {
 
         Task { [weak self] in
             let result = await flow.submitCode(pasted)
+            guard let self else { return }
             await MainActor.run {
-                guard let self else { return }
                 self.claudeReauthInProgress = false
                 self.statusOverrides[.claude] = nil
                 switch result {
@@ -512,7 +515,8 @@ final class StatusBarController: NSObject {
         let version = appVersion
         Task { [weak self] in
             guard let update = await UpdateChecker().latestRelease(currentVersion: version), update.isNewer else { return }
-            await MainActor.run { self?.sendUpdateNotification(update) }
+            guard let self else { return }
+            await MainActor.run { self.sendUpdateNotification(update) }
         }
     }
 
