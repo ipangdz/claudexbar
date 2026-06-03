@@ -144,6 +144,11 @@ final class StatusBarController: NSObject {
         menu.addItem(refreshIntervalMenu())
         menu.addItem(notificationMenu())
         menu.addItem(NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "", target: self))
+        // Hold Option to reveal a notification self-test in its place.
+        let testNotif = NSMenuItem(title: "Send Test Notification", action: #selector(sendTestNotification), keyEquivalent: "", target: self)
+        testNotif.isAlternate = true
+        testNotif.keyEquivalentModifierMask = .option
+        menu.addItem(testNotif)
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q", target: self))
 
@@ -474,6 +479,45 @@ final class StatusBarController: NSObject {
         content.title = "ClaudexBar update available"
         content.body = "Version \(update.latest) is out (you have \(update.current)). Update with git pull && ./scripts/install.sh."
         let request = UNNotificationRequest(identifier: "update-\(update.latest)", content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request)
+    }
+
+    /// One-click notification self-test: prompts for permission if undecided,
+    /// directs to System Settings if denied, otherwise posts a test banner.
+    @objc private func sendTestNotification() {
+        guard notificationsAvailable else { return }
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            let status = settings.authorizationStatus
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                switch status {
+                case .notDetermined:
+                    UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, _ in
+                        if granted { DispatchQueue.main.async { self.postTestNotification() } }
+                    }
+                case .denied:
+                    NSApp.activate(ignoringOtherApps: true)
+                    let alert = NSAlert()
+                    alert.messageText = "Notifications are turned off"
+                    alert.informativeText = "Enable them in System Settings → Notifications → ClaudexBar, then try again."
+                    alert.addButton(withTitle: "Open System Settings")
+                    alert.addButton(withTitle: "Close")
+                    if alert.runModal() == .alertFirstButtonReturn,
+                       let url = URL(string: "x-apple.systempreferences:com.apple.preference.notifications") {
+                        NSWorkspace.shared.open(url)
+                    }
+                default:
+                    self.postTestNotification()
+                }
+            }
+        }
+    }
+
+    private func postTestNotification() {
+        let content = UNMutableNotificationContent()
+        content.title = "ClaudexBar"
+        content.body = "Test notification — notifications are working."
+        let request = UNNotificationRequest(identifier: "test-\(UUID().uuidString)", content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request)
     }
 
