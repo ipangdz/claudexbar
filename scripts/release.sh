@@ -43,7 +43,11 @@ open(path, "w").write(out)
 PY
 
 git add scripts/install.sh
-git commit -m "Release ${TAG}"
+if git diff --cached --quiet; then
+  printf '%s\n' "scripts/install.sh already at ${VERSION}; tagging the current commit."
+else
+  git commit -m "Release ${TAG}"
+fi
 git tag "${TAG}"
 git push origin HEAD
 git push origin "${TAG}"
