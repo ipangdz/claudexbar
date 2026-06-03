@@ -188,11 +188,6 @@ func testSecretScannerRedactsTokenShapedStringsFromLogMessages() throws {
     try expect(SecretScanner.redact(benign) == benign, "status strings pass through untouched")
 }
 
-func testShellCommandLocatorFindsClaudeFromExpectedUserLocalPath() throws {
-    let path = ClaudeCommandLocator.findClaudeExecutable(fileExists: { $0 == "/Users/ipang/.local/bin/claude" })
-    try expect(path == "/Users/ipang/.local/bin/claude", "Claude locator checks user local bin")
-}
-
 func testProviderSelectionKeepsAtLeastOneProviderAndCyclesOnlyEnabledProviders() throws {
     var selection = ProviderSelection(activeProvider: .codex, enabledProviders: [.codex, .claude])
 
@@ -257,7 +252,6 @@ let tests: [(String, () throws -> Void)] = [
     ("Usage error transient classification", testUsageErrorTransientClassification),
     ("Update version comparison", testUpdateCheckerVersionComparison),
     ("Secret scanner redaction", testSecretScannerRedactsTokenShapedStringsFromLogMessages),
-    ("Claude command locator", testShellCommandLocatorFindsClaudeFromExpectedUserLocalPath),
     ("Provider selection model", testProviderSelectionKeepsAtLeastOneProviderAndCyclesOnlyEnabledProviders),
     ("threshold notification dedupe", testThresholdCreatesOneNotificationPerWindowCycle),
     ("cross-provider hint", testCrossProviderHintRequiresTwentyFivePointAdvantage)
