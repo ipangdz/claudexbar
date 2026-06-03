@@ -1,10 +1,29 @@
-# ClaudexBar
+<p align="center">
+  <img src="assets/icon.png" width="120" alt="ClaudexBar">
+</p>
 
-[![CI](https://github.com/ipangdz/claudexbar/actions/workflows/ci.yml/badge.svg)](https://github.com/ipangdz/claudexbar/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-![Platform: macOS 13+](https://img.shields.io/badge/macOS-13%2B-black)
+<h1 align="center">ClaudexBar</h1>
+
+<p align="center">
+  Codex &amp; Claude Code usage limits in your macOS menu bar — zero-config, native, dependency-free.
+</p>
+
+<p align="center">
+  <a href="https://github.com/ipangdz/claudexbar/actions/workflows/ci.yml"><img src="https://github.com/ipangdz/claudexbar/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
+  <img src="https://img.shields.io/badge/macOS-13%2B-black" alt="macOS 13+">
+</p>
 
 A small native macOS menu-bar app that shows **Codex** and **Claude Code** usage limits at a glance. Zero-config: it reuses your existing CLI login, shows each provider's session (5-hour) and weekly windows, and warns before you run low — no API keys, no browser cookies, no dependencies.
+
+## Demo
+
+<p align="center">
+  <img src="assets/demo.gif" width="640" alt="ClaudexBar demo"><br>
+  <em>Codex &amp; Claude Code usage right in the menu bar — right-click for the menu, hold ⌥ Option for re-auth.</em>
+</p>
+
+<p align="center"><sub><a href="assets/demo.mp4">▶︎ Watch the full-quality video</a></sub></p>
 
 ## Features
 
@@ -17,9 +36,19 @@ A small native macOS menu-bar app that shows **Codex** and **Claude Code** usage
 
 ## Install
 
-Works on **both Apple Silicon and Intel** Macs (macOS 13+) — the installer builds a native binary for your machine. It needs the Xcode Command Line Tools (`xcode-select --install`), which provide `git` and the Swift toolchain.
+Works on **both Apple Silicon and Intel** Macs (macOS 13+).
 
-One line:
+### Homebrew (prebuilt)
+
+```bash
+brew install --cask ipangdz/tap/claudexbar
+```
+
+A universal, prebuilt `.app` — no toolchain required.
+
+### From source (one line)
+
+Builds a native binary for your machine; needs the Xcode Command Line Tools (`xcode-select --install`), which provide `git` and the Swift toolchain.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ipangdz/claudexbar/main/scripts/install.sh | bash
