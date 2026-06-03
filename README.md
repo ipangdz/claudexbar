@@ -17,13 +17,24 @@ A small native macOS menu-bar app that shows **Codex** and **Claude Code** usage
 
 ## Install
 
+Works on **both Apple Silicon and Intel** Macs (macOS 13+) — the installer builds a native binary for your machine. It needs the Xcode Command Line Tools (`xcode-select --install`), which provide `git` and the Swift toolchain.
+
+One line:
+
 ```bash
+curl -fsSL https://raw.githubusercontent.com/ipangdz/claudexbar/main/scripts/install.sh | bash
+```
+
+Or from a checkout:
+
+```bash
+git clone https://github.com/ipangdz/claudexbar.git && cd claudexbar
 ./scripts/install.sh
 ```
 
-The installer builds the release binary, assembles `~/Applications/ClaudexBar.app` (with its icon), **ad-hoc code-signs it** (`codesign --sign -`), installs `~/.local/bin/claudexbar`, writes a LaunchAgent, and starts it.
+Either way, the installer builds the release binary, assembles `~/Applications/ClaudexBar.app` (with its icon), ad-hoc code-signs it, installs `~/.local/bin/claudexbar`, writes a LaunchAgent, and starts it. To update later, just run the one-liner again.
 
-ClaudexBar is built from source on your own machine, so no Apple Developer account, certificate, or notarization is required — the local ad-hoc signature is enough. (The app is a menu-bar accessory via `LSUIElement`, so its icon appears in Finder/Spotlight rather than the Dock.)
+Because it builds from source on your own machine, no Apple Developer account, certificate, or notarization is required. (A prebuilt, notarized `.dmg` would need an Apple Developer ID — a possible future option.) The app is a menu-bar accessory (`LSUIElement`), so its icon appears in Finder/Spotlight rather than the Dock.
 
 ## Development
 

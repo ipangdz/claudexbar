@@ -12,8 +12,34 @@ APP_BIN_PATH="${APP_BIN_DIR}/${APP_NAME}"
 LAUNCH_AGENT_DIR="${HOME}/Library/LaunchAgents"
 PLIST_PATH="${LAUNCH_AGENT_DIR}/${LABEL}.plist"
 LOG_DIR="${HOME}/Library/Logs/${APP_NAME}"
+REPO_URL="https://github.com/ipangdz/claudexbar.git"
+CACHE_DIR="${HOME}/.local/share/claudexbar/src"
 
-cd "$(dirname "$0")/.."
+# Resolve the project directory. When run from a checkout, build that. When
+# piped from curl (curl … | bash), there is no checkout — clone (or update) the
+# repo into a cache dir first, so the same script works as a one-liner.
+PROJECT_DIR=""
+case "${0:-}" in
+  */*)
+    CAND="$(cd "$(dirname "$0")/.." 2>/dev/null && pwd || true)"
+    [ -n "${CAND}" ] && [ -f "${CAND}/Package.swift" ] && PROJECT_DIR="${CAND}"
+    ;;
+esac
+
+if [ -z "${PROJECT_DIR}" ]; then
+  command -v git >/dev/null 2>&1 || { echo "git is required (install Xcode Command Line Tools: xcode-select --install)"; exit 1; }
+  if [ -d "${CACHE_DIR}/.git" ]; then
+    git -C "${CACHE_DIR}" pull --ff-only --quiet || true
+  else
+    mkdir -p "$(dirname "${CACHE_DIR}")"
+    git clone --depth 1 "${REPO_URL}" "${CACHE_DIR}"
+  fi
+  PROJECT_DIR="${CACHE_DIR}"
+fi
+
+command -v swift >/dev/null 2>&1 || { echo "Swift toolchain not found (install Xcode Command Line Tools: xcode-select --install)"; exit 1; }
+
+cd "${PROJECT_DIR}"
 
 swift build -c release
 
