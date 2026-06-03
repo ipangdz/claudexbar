@@ -1,0 +1,14 @@
+# SwiftPM build output
+.build/
+.swiftpm/
+
+# macOS
+.DS_Store
+
+# Local planning notes (not part of the public project)
+notes/
+
+# Xcode (if ever opened there)
+*.xcodeproj
+xcuserdata/
+*.xcuserstate
