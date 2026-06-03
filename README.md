@@ -23,8 +23,6 @@ A small native macOS menu-bar app that shows **Codex** and **Claude Code** usage
   <em>Codex &amp; Claude Code usage right in the menu bar — right-click for the menu, hold ⌥ Option for re-auth.</em>
 </p>
 
-<p align="center"><sub><a href="assets/demo.mp4">▶︎ Watch the full-quality video</a></sub></p>
-
 ## Features
 
 - Native AppKit menu bar app with no Dock icon and no main window.
