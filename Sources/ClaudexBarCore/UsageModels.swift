@@ -85,6 +85,18 @@ public enum UsageError: Error, Equatable, Sendable {
         }
     }
 
+    /// Transient errors (network blips, rate limits, server hiccups) where a
+    /// recently-fetched snapshot is still worth showing rather than blanking
+    /// the pill to a status word.
+    public var isTransient: Bool {
+        switch self {
+        case .network, .rateLimited, .server:
+            return true
+        case .missingAuth, .authExpired, .refreshFailed, .decoding, .keychain:
+            return false
+        }
+    }
+
     public var sanitizedDescription: String {
         switch self {
         case .missingAuth:

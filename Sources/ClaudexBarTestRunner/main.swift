@@ -40,13 +40,20 @@ func testCountdownChangesWhenNowChangesWithoutNewFetch() throws {
     try expect(UsageFormatter.display(for: window, now: later).label == "23m", "later countdown label")
 }
 
-func testEffectivelyFullWindowUsesWindowLabelAndClampsTo100Percent() throws {
+func testFullWindowUsesWindowLabelButPartialShowsExactPercent() throws {
     let now = Date(timeIntervalSince1970: 1_000)
-    let window = UsageWindow(windowLabel: "5h", remainingPercent: 99, resetAt: now.addingTimeInterval(45 * 60))
-    let display = UsageFormatter.display(for: window, now: now)
 
-    try expect(display.label == "5h", "full window label")
-    try expect(display.remainingPercent == 100, "full window percent")
+    // Genuinely full: window label + 100%.
+    let full = UsageWindow(windowLabel: "5h", remainingPercent: 100, resetAt: now.addingTimeInterval(45 * 60))
+    let fullDisplay = UsageFormatter.display(for: full, now: now)
+    try expect(fullDisplay.label == "5h", "full window label")
+    try expect(fullDisplay.remainingPercent == 100, "full window percent")
+
+    // 1% used: shown precisely (99%) with a reset countdown, not clamped to 100.
+    let partial = UsageWindow(windowLabel: "5h", remainingPercent: 99, resetAt: now.addingTimeInterval(45 * 60))
+    let partialDisplay = UsageFormatter.display(for: partial, now: now)
+    try expect(partialDisplay.remainingPercent == 99, "99% shown exactly, not clamped")
+    try expect(partialDisplay.label == "45m", "99% uses a reset countdown")
 }
 
 func testCodexUsageResponseParsing() throws {
@@ -149,6 +156,15 @@ func testRefreshResponseParsingRotatesRefreshTokenAndFallsBack() throws {
     try expect(noRotation?.refreshToken == "sk-ant-ort01-old", "falls back to existing refresh token when none returned")
 }
 
+func testUsageErrorTransientClassification() throws {
+    try expect(UsageError.rateLimited.isTransient, "rate limit is transient")
+    try expect(UsageError.network.isTransient, "network is transient")
+    try expect(UsageError.server(statusCode: 503).isTransient, "server error is transient")
+    try expect(!UsageError.authExpired.isTransient, "auth expired needs attention")
+    try expect(!UsageError.missingAuth.isTransient, "missing auth needs attention")
+    try expect(!UsageError.decoding.isTransient, "decoding error is not transient")
+}
+
 func testUpdateCheckerVersionComparison() throws {
     try expect(UpdateChecker.isVersion("0.2.0", newerThan: "0.1.0"), "0.2.0 > 0.1.0")
     try expect(UpdateChecker.isVersion("0.10.0", newerThan: "0.9.0"), "0.10.0 > 0.9.0 (numeric, not lexical)")
@@ -229,7 +245,7 @@ func testCrossProviderHintRequiresTwentyFivePointAdvantage() throws {
 let tests: [(String, () throws -> Void)] = [
     ("reset labels use absolute reset dates", testResetLabelsUseAbsoluteResetDates),
     ("countdown changes without new fetch", testCountdownChangesWhenNowChangesWithoutNewFetch),
-    ("effectively full window uses window label", testEffectivelyFullWindowUsesWindowLabelAndClampsTo100Percent),
+    ("full window label vs exact partial percent", testFullWindowUsesWindowLabelButPartialShowsExactPercent),
     ("Codex usage response parsing", testCodexUsageResponseParsing),
     ("Claude usage response parsing", testClaudeUsageResponseParsingUsesSevenDayFallback),
     ("Claude env OAuth token", testClaudeCredentialReaderAcceptsOAuthEnvironmentToken),
@@ -238,6 +254,7 @@ let tests: [(String, () throws -> Void)] = [
     ("Authorize URL platform flow", testAuthorizeURLUsesPlatformFlowAndProvenScopes),
     ("OAuth token response parsing", testTokenResponseParsingBuildsCredentialWithExpiry),
     ("OAuth refresh rotation", testRefreshResponseParsingRotatesRefreshTokenAndFallsBack),
+    ("Usage error transient classification", testUsageErrorTransientClassification),
     ("Update version comparison", testUpdateCheckerVersionComparison),
     ("Secret scanner redaction", testSecretScannerRedactsTokenShapedStringsFromLogMessages),
     ("Claude command locator", testShellCommandLocatorFindsClaudeFromExpectedUserLocalPath),

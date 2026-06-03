@@ -19,7 +19,10 @@ public enum UsageFormatter {
     }
 
     public static func display(for window: UsageWindow, now: Date = Date()) -> WindowDisplay {
-        if window.remainingPercent >= 99 {
+        // Only a genuinely full window shows the window label and 100%; any
+        // real usage (e.g. 99% remaining) is shown precisely so a refresh
+        // visibly reflects it.
+        if window.remainingPercent >= 100 {
             return WindowDisplay(label: window.windowLabel, remainingPercent: 100)
         }
 

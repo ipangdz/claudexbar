@@ -20,6 +20,7 @@ final class StatusBarController: NSObject {
     private var errors: [ProviderID: UsageError] = [:]
     private var statusOverrides: [ProviderID: String] = [:]
     private var claudeReauthInProgress = false
+    private var appearanceObservation: NSKeyValueObservation?
     private var refreshTimer: Timer?
     private var countdownTimer: Timer?
     private var notificationStore = NotificationCycleStore()
@@ -61,6 +62,13 @@ final class StatusBarController: NSObject {
         button.target = self
         button.action = #selector(statusItemClicked(_:))
         button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        // No pressed-state highlight behind the custom pill.
+        (button.cell as? NSButtonCell)?.highlightsBy = []
+
+        // Re-render the pill when the system appearance (light/dark) changes.
+        appearanceObservation = NSApp.observe(\.effectiveAppearance) { [weak self] _, _ in
+            DispatchQueue.main.async { self?.updateImage() }
+        }
     }
 
     private func scheduleTimers() {
@@ -92,8 +100,28 @@ final class StatusBarController: NSObject {
         refresh(provider: activeProvider)
     }
 
-    @objc private func refreshAll() {
+    private func refreshAll() {
         ProviderID.allCases.forEach(refresh(provider:))
+    }
+
+    /// Manual "Refresh All": pulse the pill so the user gets clear feedback that
+    /// a refresh was triggered (the data itself may be unchanged), then refetch.
+    @objc private func refreshAllManually() {
+        pulseRefreshIndicator()
+        refreshAll()
+    }
+
+    private func pulseRefreshIndicator() {
+        guard let button = statusItem.button else { return }
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.22
+            button.animator().alphaValue = 0.3
+        }, completionHandler: { [weak button] in
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.35
+                button?.animator().alphaValue = 1.0
+            }
+        })
     }
 
     private func refresh(provider: ProviderID) {
@@ -118,12 +146,23 @@ final class StatusBarController: NSObject {
 
     private func updateImage() {
         guard let button = statusItem.button else { return }
-        if let snapshot = snapshots[activeProvider], errors[activeProvider] == nil {
-            button.image = StatusPillRenderer.image(provider: activeProvider, snapshot: snapshot)
-        } else {
-            let status = statusOverrides[activeProvider] ?? errors[activeProvider]?.statusLabel ?? "wait"
-            button.image = StatusPillRenderer.image(provider: activeProvider, status: status)
+
+        // A status override (e.g. "login" during re-auth) always wins.
+        if let override = statusOverrides[activeProvider] {
+            button.image = StatusPillRenderer.image(provider: activeProvider, status: override)
+            return
         }
+
+        // Keep showing the last good usage on transient errors (rate limit /
+        // network blip); only fall back to a status word when there is no
+        // snapshot yet, or the error needs the user's attention (auth, parse).
+        let error = errors[activeProvider]
+        if let snapshot = snapshots[activeProvider], error == nil || error!.isTransient {
+            button.image = StatusPillRenderer.image(provider: activeProvider, snapshot: snapshot)
+            return
+        }
+
+        button.image = StatusPillRenderer.image(provider: activeProvider, status: error?.statusLabel ?? "wait")
     }
 
     private func showMenu() {
@@ -134,7 +173,7 @@ final class StatusBarController: NSObject {
 
         // "Refresh All" by default; holding Option swaps it for "Open Logs…"
         // (native alternate item), keeping maintenance actions out of the way.
-        menu.addItem(NSMenuItem(title: "Refresh All", action: #selector(refreshAll), keyEquivalent: "", target: self))
+        menu.addItem(NSMenuItem(title: "Refresh All", action: #selector(refreshAllManually), keyEquivalent: "", target: self))
         let logs = NSMenuItem(title: "Open Logs…", action: #selector(openLogs), keyEquivalent: "", target: self)
         logs.isAlternate = true
         logs.keyEquivalentModifierMask = .option
@@ -152,6 +191,9 @@ final class StatusBarController: NSObject {
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q", target: self))
 
+        // Attach the menu to the status item and click it: macOS positions it
+        // correctly under the pill (it also draws its standard selection
+        // highlight, which is the expected menu-bar behavior).
         statusItem.menu = menu
         statusItem.button?.performClick(nil)
         statusItem.menu = nil
