@@ -82,7 +82,9 @@ Uninstall removes the ClaudexBar binary, LaunchAgent, app settings, and logs. It
 
 ## Usage
 
-Left-click the pill to cycle between enabled providers. If only one provider is enabled, left-click leaves that provider selected. Right-click for the menu.
+ClaudexBar can switch providers automatically: when both providers are enabled, it watches lightweight local context (foreground app/window text and recent Codex/Claude session-file activity) and switches only after one provider has been the clear winner for a short debounce window. It does not use CPU usage or shell process scans as deciding signals.
+
+Left-click the pill to cycle between enabled providers. Manual clicks still work in auto mode and temporarily pin your choice so the pill does not jump around while you move between tools. If only one provider is enabled, left-click leaves that provider selected. Right-click for the menu.
 
 The right-click menu lists each provider once, as a 1-click checkbox row:
 
@@ -90,7 +92,7 @@ The right-click menu lists each provider once, as a 1-click checkbox row:
 - The row shows that provider's live usage (`5h% · 7d%`), or a status word (`auth` / `net` / `err`) when there is a problem.
 - **Hold ⌥ Option** (the menu reacts live): each provider row turns into **Re-auth Codex / Re-auth Claude Code**, and **Refresh All** turns into **Open Logs…**.
 
-Below the providers are Refresh All, Launch at Login, Refresh Interval, and Notify When Remaining.
+Below the providers are Refresh All, Smart Auto Switch, Launch at Login, Refresh Interval, and Notify When Remaining.
 
 The left usage column is the current session window. The right column is the weekly budget. Session usage also chips away at the weekly budget.
 

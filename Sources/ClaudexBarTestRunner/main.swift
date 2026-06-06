@@ -203,18 +203,209 @@ func testProviderSelectionKeepsAtLeastOneProviderAndCyclesOnlyEnabledProviders()
     try expect(selection.nextProvider() == .claude, "cycles to next enabled provider")
 }
 
-func testThresholdCreatesOneNotificationPerWindowCycle() throws {
+func testSmartSwitchWaitsForStableCandidateBeforeSwitching() throws {
+    let start = Date(timeIntervalSince1970: 1_000)
+    var engine = SmartProviderSwitchEngine(
+        activeProvider: .codex,
+        minimumStableDuration: 20,
+        manualOverrideDuration: 600,
+        scoreAdvantageThreshold: 30,
+        switchCooldown: 120
+    )
+
+    let early = engine.evaluate(
+        signals: SmartProviderSignals(
+            foregroundProvider: .claude,
+            recentActivityProvider: .claude,
+            runningProviders: [.claude]
+        ),
+        now: start
+    )
+    try expect(early == nil, "candidate does not switch immediately")
+
+    let stable = engine.evaluate(
+        signals: SmartProviderSignals(
+            foregroundProvider: .claude,
+            recentActivityProvider: .claude,
+            runningProviders: [.claude]
+        ),
+        now: start.addingTimeInterval(21)
+    )
+    try expect(stable == .claude, "stable candidate switches after debounce")
+}
+
+func testSmartSwitchDoesNotSwitchOnTieOrWeakProcessOnlySignal() throws {
+    let now = Date(timeIntervalSince1970: 1_000)
+    var engine = SmartProviderSwitchEngine(
+        activeProvider: .codex,
+        minimumStableDuration: 20,
+        manualOverrideDuration: 600,
+        scoreAdvantageThreshold: 30,
+        switchCooldown: 120
+    )
+
+    let tie = engine.evaluate(
+        signals: SmartProviderSignals(
+            foregroundProvider: nil,
+            recentActivityProvider: nil,
+            runningProviders: [.codex, .claude]
+        ),
+        now: now.addingTimeInterval(60)
+    )
+    try expect(tie == nil, "equal running processes do not switch")
+
+    let weak = engine.evaluate(
+        signals: SmartProviderSignals(
+            foregroundProvider: nil,
+            recentActivityProvider: nil,
+            runningProviders: [.claude]
+        ),
+        now: now.addingTimeInterval(120)
+    )
+    try expect(weak == nil, "process-only signal is too weak to switch")
+}
+
+func testSmartSwitchForegroundBeatsConflictingRecentActivity() throws {
+    let start = Date(timeIntervalSince1970: 1_000)
+    var engine = SmartProviderSwitchEngine(
+        activeProvider: .codex,
+        minimumStableDuration: 20,
+        manualOverrideDuration: 600,
+        scoreAdvantageThreshold: 30,
+        switchCooldown: 120
+    )
+
+    _ = engine.evaluate(
+        signals: SmartProviderSignals(
+            foregroundProvider: .claude,
+            recentActivityProvider: .codex,
+            runningProviders: []
+        ),
+        now: start
+    )
+    let stable = engine.evaluate(
+        signals: SmartProviderSignals(
+            foregroundProvider: .claude,
+            recentActivityProvider: .codex,
+            runningProviders: []
+        ),
+        now: start.addingTimeInterval(21)
+    )
+
+    try expect(stable == .claude, "foreground provider wins over conflicting recent activity")
+}
+
+func testSmartSwitchManualOverrideSuppressesAutoSwitchTemporarily() throws {
+    let start = Date(timeIntervalSince1970: 1_000)
+    var engine = SmartProviderSwitchEngine(
+        activeProvider: .codex,
+        minimumStableDuration: 20,
+        manualOverrideDuration: 600,
+        scoreAdvantageThreshold: 30,
+        switchCooldown: 120
+    )
+
+    engine.recordManualSelection(.codex, now: start)
+
+    let blocked = engine.evaluate(
+        signals: SmartProviderSignals(
+            foregroundProvider: .claude,
+            recentActivityProvider: .claude,
+            runningProviders: [.claude]
+        ),
+        now: start.addingTimeInterval(120)
+    )
+    try expect(blocked == nil, "manual override blocks auto-switch")
+
+    let afterOverride = engine.evaluate(
+        signals: SmartProviderSignals(
+            foregroundProvider: .claude,
+            recentActivityProvider: .claude,
+            runningProviders: [.claude]
+        ),
+        now: start.addingTimeInterval(621)
+    )
+    try expect(afterOverride == .claude, "auto-switch resumes after manual override expires")
+}
+
+func testSmartProviderTextMatcherDoesNotTreatClaudexBarAsClaude() throws {
+    try expect(SmartProviderTextMatcher.provider(in: ["ClaudexBar"]) == nil, "app name is not a provider")
+    try expect(SmartProviderTextMatcher.provider(in: ["Claude Code"]) == .claude, "Claude Code text maps to Claude")
+    try expect(SmartProviderTextMatcher.provider(in: ["/usr/local/bin/codex"]) == .codex, "codex executable maps to Codex")
+}
+
+func testThresholdCreatesOneUsageNotificationPerCooldown() throws {
     var store = NotificationCycleStore()
     let resetAt = Date(timeIntervalSince1970: 2_000)
     let window = UsageWindow(windowLabel: "5h", remainingPercent: 18, resetAt: resetAt)
     let snapshot = UsageSnapshot(primary: window, secondary: window, fetchedAt: Date())
-    let evaluator = NotificationEvaluator(threshold: .twentyPercent)
+    let evaluator = NotificationEvaluator(threshold: .twentyPercent, minimumUsageNotificationInterval: 30 * 60)
 
     let first = evaluator.decisions(activeProvider: .codex, snapshots: [.codex: snapshot], store: &store, now: Date(timeIntervalSince1970: 1_000))
-    let second = evaluator.decisions(activeProvider: .codex, snapshots: [.codex: snapshot], store: &store, now: Date(timeIntervalSince1970: 1_100))
+    let soonAfter = evaluator.decisions(activeProvider: .codex, snapshots: [.codex: snapshot], store: &store, now: Date(timeIntervalSince1970: 1_100))
+    let afterCooldown = evaluator.decisions(activeProvider: .codex, snapshots: [.codex: snapshot], store: &store, now: Date(timeIntervalSince1970: 2_901))
 
-    try expect(first.count == 2, "first threshold notifications")
-    try expect(second.isEmpty, "deduped threshold notifications")
+    try expect(first.count == 1, "only one threshold notification is delivered at once")
+    try expect(first.first?.windowKind == .primary, "primary window is delivered first")
+    try expect(soonAfter.isEmpty, "usage notifications are rate limited")
+    try expect(afterCooldown.count == 1, "second window can notify after cooldown")
+    try expect(afterCooldown.first?.windowKind == .secondary, "secondary window was delayed, not discarded")
+}
+
+func testNotificationCooldownStartsOnlyWhenNotificationIsDelivered() throws {
+    var store = NotificationCycleStore()
+    let resetAt = Date(timeIntervalSince1970: 4_000)
+    let healthy = UsageWindow(windowLabel: "5h", remainingPercent: 60, resetAt: resetAt)
+    let low = UsageWindow(windowLabel: "5h", remainingPercent: 18, resetAt: resetAt)
+    let evaluator = NotificationEvaluator(threshold: .twentyPercent, minimumUsageNotificationInterval: 30 * 60)
+
+    let none = evaluator.decisions(
+        activeProvider: .codex,
+        snapshots: [.codex: UsageSnapshot(primary: healthy, secondary: healthy, fetchedAt: Date())],
+        store: &store,
+        now: Date(timeIntervalSince1970: 1_000)
+    )
+    let firstLow = evaluator.decisions(
+        activeProvider: .codex,
+        snapshots: [.codex: UsageSnapshot(primary: low, secondary: healthy, fetchedAt: Date())],
+        store: &store,
+        now: Date(timeIntervalSince1970: 1_100)
+    )
+
+    try expect(none.isEmpty, "healthy usage does not notify")
+    try expect(firstLow.count == 1, "first low usage is not suppressed by a healthy refresh")
+}
+
+func testDefaultUsageNotificationCooldownIsThreeHours() throws {
+    var store = NotificationCycleStore()
+    let resetAt = Date(timeIntervalSince1970: 20_000)
+    let primary = UsageWindow(windowLabel: "5h", remainingPercent: 18, resetAt: resetAt)
+    let firstSnapshot = UsageSnapshot(primary: primary, secondary: UsageWindow(windowLabel: "7d", remainingPercent: 80, resetAt: resetAt), fetchedAt: Date())
+    let secondSnapshot = UsageSnapshot(primary: primary, secondary: UsageWindow(windowLabel: "7d", remainingPercent: 12, resetAt: resetAt), fetchedAt: Date())
+    let evaluator = NotificationEvaluator(threshold: .twentyPercent)
+
+    let first = evaluator.decisions(
+        activeProvider: .codex,
+        snapshots: [.codex: firstSnapshot],
+        store: &store,
+        now: Date(timeIntervalSince1970: 1_000)
+    )
+    let beforeThreeHours = evaluator.decisions(
+        activeProvider: .codex,
+        snapshots: [.codex: secondSnapshot],
+        store: &store,
+        now: Date(timeIntervalSince1970: 1_000 + (3 * 60 * 60) - 1)
+    )
+    let afterThreeHours = evaluator.decisions(
+        activeProvider: .codex,
+        snapshots: [.codex: secondSnapshot],
+        store: &store,
+        now: Date(timeIntervalSince1970: 1_000 + (3 * 60 * 60))
+    )
+
+    try expect(first.count == 1, "first low usage notifies")
+    try expect(beforeThreeHours.isEmpty, "default cooldown blocks notifications before three hours")
+    try expect(afterThreeHours.count == 1, "default cooldown allows notifications after three hours")
 }
 
 func testCrossProviderHintRequiresTwentyFivePointAdvantage() throws {
@@ -253,7 +444,14 @@ let tests: [(String, () throws -> Void)] = [
     ("Update version comparison", testUpdateCheckerVersionComparison),
     ("Secret scanner redaction", testSecretScannerRedactsTokenShapedStringsFromLogMessages),
     ("Provider selection model", testProviderSelectionKeepsAtLeastOneProviderAndCyclesOnlyEnabledProviders),
-    ("threshold notification dedupe", testThresholdCreatesOneNotificationPerWindowCycle),
+    ("Smart switch stable candidate", testSmartSwitchWaitsForStableCandidateBeforeSwitching),
+    ("Smart switch tie and weak signal", testSmartSwitchDoesNotSwitchOnTieOrWeakProcessOnlySignal),
+    ("Smart switch foreground beats recent activity", testSmartSwitchForegroundBeatsConflictingRecentActivity),
+    ("Smart switch manual override", testSmartSwitchManualOverrideSuppressesAutoSwitchTemporarily),
+    ("Smart provider text matcher", testSmartProviderTextMatcherDoesNotTreatClaudexBarAsClaude),
+    ("threshold notification dedupe", testThresholdCreatesOneUsageNotificationPerCooldown),
+    ("notification cooldown starts on delivery", testNotificationCooldownStartsOnlyWhenNotificationIsDelivered),
+    ("default usage notification cooldown", testDefaultUsageNotificationCooldownIsThreeHours),
     ("cross-provider hint", testCrossProviderHintRequiresTwentyFivePointAdvantage)
 ]
 

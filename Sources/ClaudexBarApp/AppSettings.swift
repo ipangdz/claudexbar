@@ -46,4 +46,16 @@ final class AppSettings {
             defaults.set(newValue.rawValue, forKey: "notificationThreshold")
         }
     }
+
+    var smartSwitchEnabled: Bool {
+        get {
+            if defaults.object(forKey: "smartSwitchEnabled") == nil {
+                return true
+            }
+            return defaults.bool(forKey: "smartSwitchEnabled")
+        }
+        set {
+            defaults.set(newValue, forKey: "smartSwitchEnabled")
+        }
+    }
 }

@@ -7,6 +7,7 @@ final class StatusBarController: NSObject {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let settings = AppSettings.shared
     private let logger = SanitizedLogger.shared
+    private let smartSwitchDetector = SmartProviderDetector()
     private let providers: [ProviderID: any UsageProvider] = [
         .codex: CodexProvider(),
         // Persist rotated tokens after every refresh so ClaudexBar's own
@@ -23,7 +24,11 @@ final class StatusBarController: NSObject {
     private var appearanceObservation: NSKeyValueObservation?
     private var refreshTimer: Timer?
     private var countdownTimer: Timer?
+    private var smartSwitchTimer: Timer?
+    private var smartSwitchEngine: SmartProviderSwitchEngine?
+    private var smartSwitchDetectionInProgress = false
     private var notificationStore = NotificationCycleStore()
+    private var lastAuthNotificationAt: [ProviderID: Date] = [:]
     private var providerSelection: ProviderSelection {
         get {
             ProviderSelection(activeProvider: settings.activeProvider, enabledProviders: settings.enabledProviders)
@@ -45,6 +50,7 @@ final class StatusBarController: NSObject {
     func start() {
         AppPaths.ensureDirectories()
         requestNotificationAuthorizationIfAvailable()
+        smartSwitchEngine = SmartProviderSwitchEngine(activeProvider: settings.activeProvider)
         configureButton()
         updateImage()
         refreshAll()
@@ -75,6 +81,7 @@ final class StatusBarController: NSObject {
     private func scheduleTimers() {
         refreshTimer?.invalidate()
         countdownTimer?.invalidate()
+        smartSwitchTimer?.invalidate()
 
         refreshTimer = Timer.scheduledTimer(withTimeInterval: settings.refreshInterval, repeats: true) { [weak self] _ in
             guard let self else { return }
@@ -83,6 +90,12 @@ final class StatusBarController: NSObject {
         countdownTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             guard let self else { return }
             Task { @MainActor in self.updateImage() }
+        }
+        if settings.smartSwitchEnabled {
+            smartSwitchTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+                guard let self else { return }
+                Task { @MainActor in self.beginSmartSwitchEvaluation() }
+            }
         }
     }
 
@@ -98,13 +111,64 @@ final class StatusBarController: NSObject {
     private func toggleProvider() {
         let selection = providerSelection
         guard selection.enabledProviders.count > 1 else { return }
-        activeProvider = selection.nextProvider()
+        let next = selection.nextProvider()
+        activeProvider = next
+        smartSwitchEngine?.recordManualSelection(next, now: Date())
         updateImage()
         refresh(provider: activeProvider)
     }
 
+    private func beginSmartSwitchEvaluation() {
+        guard settings.smartSwitchEnabled else { return }
+        let selection = providerSelection
+        guard selection.enabledProviders.count > 1 else { return }
+        guard !smartSwitchDetectionInProgress else { return }
+        smartSwitchDetectionInProgress = true
+
+        let foregroundProvider = smartSwitchDetector.foregroundProvider()
+
+        DispatchQueue.global(qos: .utility).async { [weak self, foregroundProvider] in
+            let recentActivityProvider = SmartProviderDetector().recentActivityProvider()
+            DispatchQueue.main.async {
+                self?.finishSmartSwitchEvaluation(
+                    foregroundProvider: foregroundProvider,
+                    recentActivityProvider: recentActivityProvider
+                )
+            }
+        }
+    }
+
+    private func finishSmartSwitchEvaluation(foregroundProvider: ProviderID?, recentActivityProvider: ProviderID?) {
+        smartSwitchDetectionInProgress = false
+
+        guard settings.smartSwitchEnabled else { return }
+        let selection = providerSelection
+        guard selection.enabledProviders.count > 1 else { return }
+
+        if smartSwitchEngine == nil {
+            smartSwitchEngine = SmartProviderSwitchEngine(activeProvider: activeProvider)
+        }
+        if smartSwitchEngine?.activeProvider != activeProvider {
+            smartSwitchEngine?.recordExternalSelection(activeProvider)
+        }
+
+        let enabled = Set(selection.enabledProviders)
+        let signals = SmartProviderSignals(
+            foregroundProvider: foregroundProvider.flatMap { enabled.contains($0) ? $0 : nil },
+            recentActivityProvider: recentActivityProvider.flatMap { enabled.contains($0) ? $0 : nil },
+            runningProviders: []
+        )
+
+        guard let provider = smartSwitchEngine?.evaluate(signals: signals, now: Date()) else { return }
+        activeProvider = provider
+        updateImage()
+        refresh(provider: provider, notify: false)
+    }
+
     private func refreshAll() {
-        ProviderID.allCases.forEach(refresh(provider:))
+        ProviderID.allCases.forEach { provider in
+            refresh(provider: provider)
+        }
     }
 
     /// Manual "Refresh All": pulse the pill so the user gets clear feedback that
@@ -127,7 +191,7 @@ final class StatusBarController: NSObject {
         })
     }
 
-    private func refresh(provider: ProviderID) {
+    private func refresh(provider: ProviderID, notify: Bool = true) {
         guard let usageProvider = providers[provider] else { return }
         Task {
             let result = await usageProvider.fetchUsage()
@@ -142,7 +206,9 @@ final class StatusBarController: NSObject {
                     logger.log(provider: provider, message: error.sanitizedDescription)
                 }
                 updateImage()
-                evaluateNotifications()
+                if notify {
+                    evaluateNotifications()
+                }
             }
         }
     }
@@ -182,6 +248,7 @@ final class StatusBarController: NSObject {
         logs.keyEquivalentModifierMask = .option
         menu.addItem(logs)
 
+        menu.addItem(toggleItem(title: "Smart Auto Switch", isOn: settings.smartSwitchEnabled, action: #selector(toggleSmartSwitch)))
         menu.addItem(toggleItem(title: "Launch at Login", isOn: LaunchAgentManager.isEnabled(), action: #selector(toggleLaunchAtLogin)))
         menu.addItem(refreshIntervalMenu())
         menu.addItem(notificationMenu())
@@ -284,7 +351,9 @@ final class StatusBarController: NSObject {
         var selection = providerSelection
         selection.toggleEnabled(provider)
         providerSelection = selection
+        smartSwitchEngine?.recordExternalSelection(activeProvider)
         updateImage()
+        scheduleTimers()
         if providerSelection.enabledProviders.contains(provider) {
             refresh(provider: provider)
         }
@@ -322,6 +391,15 @@ final class StatusBarController: NSObject {
 
     @objc private func toggleLaunchAtLogin() {
         LaunchAgentManager.setEnabled(!LaunchAgentManager.isEnabled())
+    }
+
+    @objc private func toggleSmartSwitch() {
+        settings.smartSwitchEnabled.toggle()
+        if settings.smartSwitchEnabled {
+            smartSwitchEngine = SmartProviderSwitchEngine(activeProvider: activeProvider)
+            beginSmartSwitchEvaluation()
+        }
+        scheduleTimers()
     }
 
     @objc private func openLogs() {
@@ -461,6 +539,13 @@ final class StatusBarController: NSObject {
     }
 
     private func sendAuthNotification(provider: ProviderID) {
+        let now = Date()
+        if let last = lastAuthNotificationAt[provider],
+           now.timeIntervalSince(last) < NotificationEvaluator.defaultUsageNotificationInterval {
+            return
+        }
+        lastAuthNotificationAt[provider] = now
+
         let content = UNMutableNotificationContent()
         content.title = "ClaudexBar"
         content.body = "\(provider.displayName) auth expired. Run Re-auth \(provider.displayName)."
