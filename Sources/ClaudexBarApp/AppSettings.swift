@@ -21,10 +21,28 @@ final class AppSettings {
                 return ProviderID.allCases
             }
             let providers = rawValues.compactMap(ProviderID.init(rawValue:))
-            return providers.isEmpty ? ProviderID.allCases : ProviderID.allCases.filter { providers.contains($0) }
+            return ProviderID.allCases.filter { providers.contains($0) }
         }
         set {
             defaults.set(newValue.map(\.rawValue), forKey: "enabledProviders")
+        }
+    }
+
+    var activeCodexAccountID: String? {
+        get {
+            defaults.string(forKey: "activeCodexAccountID")
+        }
+        set {
+            defaults.set(newValue, forKey: "activeCodexAccountID")
+        }
+    }
+
+    var enabledCodexAccountIDs: [String]? {
+        get {
+            defaults.array(forKey: "enabledCodexAccountIDs") as? [String]
+        }
+        set {
+            defaults.set(newValue, forKey: "enabledCodexAccountIDs")
         }
     }
 

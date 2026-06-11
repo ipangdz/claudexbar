@@ -98,6 +98,33 @@ final class SmartProviderDetector {
         }
     }
 
+    func recentCodexAccount(in accounts: [CodexAccount]) -> CodexAccount? {
+        processCodexAccount(in: accounts) ?? CodexAccountActivityDetector().recentAccount(in: accounts)
+    }
+
+    private func processCodexAccount(in accounts: [CodexAccount]) -> CodexAccount? {
+        guard !accounts.isEmpty else { return nil }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", "/bin/ps axeww -o command | /usr/bin/grep CODEX_HOME | /usr/bin/grep codex"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            return nil
+        }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        guard let output = String(data: data, encoding: .utf8) else { return nil }
+        let lines = output
+            .split(separator: "\n")
+            .map(String.init)
+            .filter { $0.contains("codex") && $0.contains("CODEX_HOME=") }
+        return CodexAccountProcessMatcher.account(inProcessLines: lines, accounts: accounts)
+    }
+
     private func latestModificationDate(
         under root: URL,
         maxDepth: Int,

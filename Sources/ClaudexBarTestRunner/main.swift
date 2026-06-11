@@ -69,6 +69,118 @@ func testCodexUsageResponseParsing() throws {
     try expect(snapshot.secondary.resetAt == now.addingTimeInterval(395_000), "Codex secondary reset")
 }
 
+func testCodexAccountDiscoveryScansDefaultAndSuffixedHomes() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let t3Caches = root.appendingPathComponent(".t3/caches")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: t3Caches, withIntermediateDirectories: true)
+
+    func writeAccount(_ folder: String, accountID: String) throws {
+        let dir = root.appendingPathComponent(folder)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let auth = Data(#"{"tokens":{"access_token":"dummy"},"account_id":"\#(accountID)"}"#.utf8)
+        try auth.write(to: dir.appendingPathComponent("auth.json"))
+    }
+
+    try writeAccount(".codex", accountID: "default-id")
+    try writeAccount(".codex_argun", accountID: "argun-id")
+    try FileManager.default.createDirectory(at: root.appendingPathComponent(".codex_empty"), withIntermediateDirectories: true)
+    try Data(#"{"displayName":"Argun","auth":{"email":"argun@example.com"}}"#.utf8)
+        .write(to: t3Caches.appendingPathComponent("codex_argun.json"))
+
+    let accounts = CodexAccountDiscovery(homeDirectory: root, t3CacheDirectory: t3Caches).discover()
+
+    try expect(accounts.map(\.id) == ["default-id", "argun-id"], "discovers default first, then suffixed valid homes")
+    try expect(accounts[0].displayName == "Codex", "default display name stays compact")
+    try expect(accounts[0].initials == nil, "default account has no menu bar badge")
+    try expect(accounts[1].displayName == "Argun", "suffixed account uses T3 display name")
+    try expect(accounts[1].initials == "AR", "suffixed account gets initials")
+    try expect(accounts[1].authURL.path.hasSuffix(".codex_argun/auth.json"), "auth URL points at suffixed home")
+}
+
+func testCodexAccountActivityDetectorSelectsMostRecentAccountHome() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    func account(_ folder: String, id: String) throws -> CodexAccount {
+        let dir = root.appendingPathComponent(folder)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data(#"{"tokens":{"access_token":"dummy"},"account_id":"\#(id)"}"#.utf8)
+            .write(to: dir.appendingPathComponent("auth.json"))
+        return CodexAccount(id: id, homeURL: dir, displayName: folder, isDefault: folder == ".codex")
+    }
+
+    let defaultAccount = try account(".codex", id: "default-id")
+    let argunAccount = try account(".codex_argun", id: "argun-id")
+    let now = Date(timeIntervalSince1970: 10_000)
+
+    let defaultIndex = defaultAccount.homeURL.appendingPathComponent("session_index.jsonl")
+    let argunIndex = argunAccount.homeURL.appendingPathComponent("session_index.jsonl")
+    try Data("default".utf8).write(to: defaultIndex)
+    try Data("argun".utf8).write(to: argunIndex)
+    try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(-120)], ofItemAtPath: defaultIndex.path)
+    try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(-20)], ofItemAtPath: argunIndex.path)
+
+    let detector = CodexAccountActivityDetector()
+    let recent = detector.recentAccount(in: [defaultAccount, argunAccount], now: now)
+
+    try expect(recent?.id == "argun-id", "most recent suffixed Codex home is selected")
+}
+
+func testCodexAccountActivityDetectorIgnoresDefaultLogFilesForAccountChoice() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    func account(_ folder: String, id: String) throws -> CodexAccount {
+        let dir = root.appendingPathComponent(folder)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data(#"{"tokens":{"access_token":"dummy"},"account_id":"\#(id)"}"#.utf8)
+            .write(to: dir.appendingPathComponent("auth.json"))
+        return CodexAccount(id: id, homeURL: dir, displayName: folder, isDefault: folder == ".codex")
+    }
+
+    let defaultAccount = try account(".codex", id: "default-id")
+    let argunAccount = try account(".codex_argun", id: "argun-id")
+    let now = Date(timeIntervalSince1970: 20_000)
+
+    let defaultLog = defaultAccount.homeURL.appendingPathComponent("logs_2.sqlite-wal")
+    let argunIndex = argunAccount.homeURL.appendingPathComponent("session_index.jsonl")
+    try Data("default-log".utf8).write(to: defaultLog)
+    try Data("argun".utf8).write(to: argunIndex)
+    try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(-5)], ofItemAtPath: defaultLog.path)
+    try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(-20)], ofItemAtPath: argunIndex.path)
+
+    let recent = CodexAccountActivityDetector().recentAccount(in: [defaultAccount, argunAccount], now: now)
+
+    try expect(recent?.id == "argun-id", "default log files do not override account session activity")
+}
+
+func testCodexAccountProcessMatcherUsesCodexHomeEnvironment() throws {
+    let root = URL(fileURLWithPath: "/Users/example")
+    let defaultAccount = CodexAccount(
+        id: "default-id",
+        homeURL: root.appendingPathComponent(".codex"),
+        displayName: "Codex",
+        isDefault: true
+    )
+    let argunAccount = CodexAccount(
+        id: "argun-id",
+        homeURL: root.appendingPathComponent(".codex_argun"),
+        displayName: "Argun",
+        isDefault: false
+    )
+
+    let account = CodexAccountProcessMatcher.account(
+        inProcessLines: [
+            "/Applications/Codex.app/Contents/Resources/codex app-server CODEX_HOME=/Users/example/.codex",
+            "/Applications/Codex.app/Contents/Resources/codex app-server CODEX_HOME=/Users/example/.codex_argun"
+        ],
+        accounts: [defaultAccount, argunAccount]
+    )
+
+    try expect(account?.id == "argun-id", "non-default CODEX_HOME process selects matching Codex account")
+}
+
 func testClaudeUsageResponseParsingUsesSevenDayFallback() throws {
     let data = try fixtureData("claude_usage")
     let snapshot = try ClaudeProvider.parseUsageResponse(data, fetchedAt: Date(timeIntervalSince1970: 1_700_000_000))
@@ -188,19 +300,49 @@ func testSecretScannerRedactsTokenShapedStringsFromLogMessages() throws {
     try expect(SecretScanner.redact(benign) == benign, "status strings pass through untouched")
 }
 
-func testProviderSelectionKeepsAtLeastOneProviderAndCyclesOnlyEnabledProviders() throws {
+func testProviderSelectionCyclesOnlyEnabledProviders() throws {
     var selection = ProviderSelection(activeProvider: .codex, enabledProviders: [.codex, .claude])
 
     selection.toggleEnabled(.claude)
     try expect(selection.enabledProviders == [.codex], "Claude can be disabled")
     try expect(selection.nextProvider() == .codex, "single enabled provider does not cycle")
 
-    selection.toggleEnabled(.codex)
-    try expect(selection.enabledProviders == [.codex], "cannot disable the last provider")
-
     selection.toggleEnabled(.claude)
     selection.activeProvider = .codex
     try expect(selection.nextProvider() == .claude, "cycles to next enabled provider")
+}
+
+func testProviderSelectionCanBeEmptyForPausedMode() throws {
+    var selection = ProviderSelection(activeProvider: .claude, enabledProviders: [.claude])
+
+    selection.toggleEnabled(.claude)
+
+    try expect(selection.enabledProviders.isEmpty, "last provider can be disabled for paused mode")
+    try expect(selection.activeProvider == .claude, "active provider remains stable while paused")
+    try expect(selection.nextProvider() == .claude, "empty selection has no cycle target")
+}
+
+func testCodexAccountSelectionAllowsNoCodexWhenClaudeIsEnabled() throws {
+    let account = CodexAccount(
+        id: "default-id",
+        homeURL: URL(fileURLWithPath: "/Users/example/.codex"),
+        displayName: "Codex",
+        isDefault: true
+    )
+
+    let disabledForClaude = CodexAccountSelection.enabledAccounts(
+        from: [account],
+        enabledIDs: [],
+        isClaudeEnabled: true
+    )
+    try expect(disabledForClaude.isEmpty, "explicit empty Codex selection stays empty when Claude is enabled")
+
+    let fallbackForCodexOnly = CodexAccountSelection.enabledAccounts(
+        from: [account],
+        enabledIDs: [],
+        isClaudeEnabled: false
+    )
+    try expect(fallbackForCodexOnly.isEmpty, "explicit empty Codex selection stays empty for paused mode")
 }
 
 func testSmartSwitchWaitsForStableCandidateBeforeSwitching() throws {
@@ -433,6 +575,10 @@ let tests: [(String, () throws -> Void)] = [
     ("countdown changes without new fetch", testCountdownChangesWhenNowChangesWithoutNewFetch),
     ("full window label vs exact partial percent", testFullWindowUsesWindowLabelButPartialShowsExactPercent),
     ("Codex usage response parsing", testCodexUsageResponseParsing),
+    ("Codex account discovery", testCodexAccountDiscoveryScansDefaultAndSuffixedHomes),
+    ("Codex account activity detection", testCodexAccountActivityDetectorSelectsMostRecentAccountHome),
+    ("Codex account activity ignores logs", testCodexAccountActivityDetectorIgnoresDefaultLogFilesForAccountChoice),
+    ("Codex account process matcher", testCodexAccountProcessMatcherUsesCodexHomeEnvironment),
     ("Claude usage response parsing", testClaudeUsageResponseParsingUsesSevenDayFallback),
     ("Claude env OAuth token", testClaudeCredentialReaderAcceptsOAuthEnvironmentToken),
     ("PKCE S256 challenge", testPKCEChallengeMatchesRFC7636Vector),
@@ -443,7 +589,9 @@ let tests: [(String, () throws -> Void)] = [
     ("Usage error transient classification", testUsageErrorTransientClassification),
     ("Update version comparison", testUpdateCheckerVersionComparison),
     ("Secret scanner redaction", testSecretScannerRedactsTokenShapedStringsFromLogMessages),
-    ("Provider selection model", testProviderSelectionKeepsAtLeastOneProviderAndCyclesOnlyEnabledProviders),
+    ("Provider selection model", testProviderSelectionCyclesOnlyEnabledProviders),
+    ("Provider selection paused mode", testProviderSelectionCanBeEmptyForPausedMode),
+    ("Codex account selection can be empty with Claude", testCodexAccountSelectionAllowsNoCodexWhenClaudeIsEnabled),
     ("Smart switch stable candidate", testSmartSwitchWaitsForStableCandidateBeforeSwitching),
     ("Smart switch tie and weak signal", testSmartSwitchDoesNotSwitchOnTieOrWeakProcessOnlySignal),
     ("Smart switch foreground beats recent activity", testSmartSwitchForegroundBeatsConflictingRecentActivity),

@@ -2,14 +2,15 @@ import AppKit
 import ClaudexBarCore
 
 enum StatusPillRenderer {
-    private static let itemWidth: CGFloat = 122
+    private static let itemWidth: CGFloat = 128
     private static let itemHeight: CGFloat = 26
 
-    static func image(provider: ProviderID, snapshot: UsageSnapshot, now: Date = Date()) -> NSImage {
+    static func image(provider: ProviderID, snapshot: UsageSnapshot, codexInitials: String? = nil, now: Date = Date()) -> NSImage {
         let primary = UsageFormatter.display(for: snapshot.primary, now: now)
         let secondary = UsageFormatter.display(for: snapshot.secondary, now: now)
         return image(
             provider: provider,
+            codexInitials: codexInitials,
             primaryLabel: primary.label,
             primaryRemaining: primary.remainingPercent,
             secondaryLabel: secondary.label,
@@ -17,18 +18,39 @@ enum StatusPillRenderer {
         )
     }
 
-    static func image(provider: ProviderID, status: String) -> NSImage {
+    static func image(provider: ProviderID, status: String, codexInitials: String? = nil) -> NSImage {
         let colors = themeColors()
         let image = baseImage(backgroundColor: colors.background)
         image.lockFocus()
         drawIcon(provider: provider, in: NSRect(x: 8, y: 5, width: 16, height: 16), color: colors.foreground)
+        if provider == .codex, let codexInitials {
+            drawBadge(codexInitials, at: NSRect(x: 25.5, y: 7.5, width: 14, height: 11), colors: colors)
+        }
 
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 14, weight: .semibold),
             .foregroundColor: colors.foreground
         ]
         NSString(string: status).draw(
-            in: NSRect(x: 35, y: 5.5, width: itemWidth - 42, height: 18),
+            in: NSRect(x: 42, y: 5.5, width: itemWidth - 49, height: 18),
+            withAttributes: attributes
+        )
+
+        image.unlockFocus()
+        return image
+    }
+
+    static func pausedImage() -> NSImage {
+        let colors = themeColors()
+        let image = baseImage(backgroundColor: colors.background)
+        image.lockFocus()
+
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 14, weight: .semibold),
+            .foregroundColor: colors.foreground
+        ]
+        NSString(string: "off").draw(
+            in: NSRect(x: 16, y: 5.5, width: itemWidth - 32, height: 18),
             withAttributes: attributes
         )
 
@@ -38,6 +60,7 @@ enum StatusPillRenderer {
 
     private static func image(
         provider: ProviderID,
+        codexInitials: String?,
         primaryLabel: String,
         primaryRemaining: Int,
         secondaryLabel: String,
@@ -47,17 +70,20 @@ enum StatusPillRenderer {
         let image = baseImage(backgroundColor: colors.background)
         image.lockFocus()
         drawIcon(provider: provider, in: NSRect(x: 8, y: 5, width: 16, height: 16), color: colors.foreground)
+        if provider == .codex, let codexInitials {
+            drawBadge(codexInitials, at: NSRect(x: 25.5, y: 7.5, width: 14, height: 11), colors: colors)
+        }
         drawMetric(
             label: primaryLabel,
             value: "\(primaryRemaining)%",
-            x: 36,
+            x: 42,
             foregroundColor: colors.foreground,
             secondaryForegroundColor: colors.secondaryForeground
         )
         drawMetric(
             label: secondaryLabel,
             value: "\(secondaryRemaining)%",
-            x: 78,
+            x: 84,
             foregroundColor: colors.foreground,
             secondaryForegroundColor: colors.secondaryForeground
         )
@@ -147,6 +173,39 @@ enum StatusPillRenderer {
         themeColors().background.setFill()
         draw(6, 8.1, 1.55, 2.9)
         draw(16.45, 8.1, 1.55, 2.9)
+    }
+
+    private static func drawBadge(
+        _ initials: String,
+        at rect: NSRect,
+        colors: (background: NSColor, foreground: NSColor, secondaryForeground: NSColor)
+    ) {
+        let palette = badgeColor(for: initials)
+        palette.background.setFill()
+        NSBezierPath(roundedRect: rect, xRadius: 3.5, yRadius: 3.5).fill()
+
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 6.2, weight: .bold),
+            .foregroundColor: palette.foreground,
+            .kern: 0
+        ]
+        let text = String(initials.prefix(2)).uppercased() as NSString
+        let size = text.size(withAttributes: attributes)
+        text.draw(
+            at: NSPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2),
+            withAttributes: attributes
+        )
+    }
+
+    private static func badgeColor(for initials: String) -> (background: NSColor, foreground: NSColor) {
+        let palettes: [(NSColor, NSColor)] = [
+            (NSColor(calibratedRed: 0.12, green: 0.62, blue: 0.34, alpha: 1), .white),
+            (NSColor(calibratedRed: 0.95, green: 0.70, blue: 0.16, alpha: 1), NSColor(calibratedWhite: 0.08, alpha: 1)),
+            (NSColor(calibratedRed: 0.18, green: 0.45, blue: 0.82, alpha: 1), .white),
+            (NSColor(calibratedRed: 0.72, green: 0.22, blue: 0.45, alpha: 1), .white)
+        ]
+        let value = initials.unicodeScalars.reduce(0) { $0 + Int($1.value) }
+        return palettes[value % palettes.count]
     }
 
     private static func drawMetric(
