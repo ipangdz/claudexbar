@@ -86,11 +86,12 @@ ClaudexBar can switch providers automatically: when both providers are enabled, 
 
 Left-click the pill to cycle between enabled providers. Manual clicks still work in auto mode and temporarily pin your choice so the pill does not jump around while you move between tools. If only one provider is enabled, left-click leaves that provider selected. Right-click for the menu.
 
-The right-click menu lists each provider once, as a 1-click checkbox row:
+The right-click menu lists the two providers, Codex and Claude Code, as 1-click checkbox rows:
 
-- The checkbox toggles whether the provider is enabled (Codex + Claude Code both checked → left-click cycles between them; only one checked → ClaudexBar stays on it). At least one provider always stays enabled.
+- The checkbox toggles whether the provider is enabled (both enabled → left-click cycles between them; only one enabled provider → ClaudexBar stays on it; none enabled → paused/off).
 - The row shows that provider's live usage (`5h% · 7d%`), or a status word (`auth` / `net` / `err`) when there is a problem.
-- **Hold ⌥ Option** (the menu reacts live): each provider row turns into **Re-auth Codex / Re-auth Claude Code**, and **Refresh All** turns into **Open Logs…**.
+- Re-auth actions are exposed through ⌥ Option alternates.
+- **Hold ⌥ Option** to swap **Open Logs…** into the maintenance area.
 
 Below the providers are Refresh All, Smart Auto Switch, Launch at Login, Refresh Interval, and Notify When Remaining.
 

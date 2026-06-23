@@ -7,7 +7,6 @@ import AppKit
 final class ProviderToggleView: NSView {
     private let label: String
     private let hint: String
-    private let badge: String?
     private let isEnabled: () -> Bool
     private let onToggle: () -> Void
     private var highlighted = false
@@ -16,15 +15,18 @@ final class ProviderToggleView: NSView {
     private let rowHeight: CGFloat = 22
     private let checkX: CGFloat = 7
     private let nameX: CGFloat = 22
-    private let badgeWidth: CGFloat = 23
     private let hintGap: CGFloat = 18
     private let rightPad: CGFloat = 24
     private var font: NSFont { NSFont.menuFont(ofSize: 0) }
 
-    init(label: String, hint: String, badge: String? = nil, isEnabled: @escaping () -> Bool, onToggle: @escaping () -> Void) {
+    init(
+        label: String,
+        hint: String,
+        isEnabled: @escaping () -> Bool,
+        onToggle: @escaping () -> Void
+    ) {
         self.label = label
         self.hint = hint
-        self.badge = badge
         self.isEnabled = isEnabled
         self.onToggle = onToggle
         super.init(frame: NSRect(x: 0, y: 0, width: 100, height: rowHeight))
@@ -41,8 +43,7 @@ final class ProviderToggleView: NSView {
 
     private func intrinsicWidth() -> CGFloat {
         let hintW = hint.isEmpty ? 0 : textWidth(hint) + hintGap
-        let badgeW = badge == nil ? 0 : badgeWidth
-        return nameX + badgeW + textWidth(label) + hintW + rightPad
+        return nameX + textWidth(label) + hintW + rightPad
     }
 
     override func updateTrackingAreas() {
@@ -53,12 +54,20 @@ final class ProviderToggleView: NSView {
                                        owner: self))
     }
 
-    override func mouseEntered(with event: NSEvent) { highlighted = true; needsDisplay = true }
-    override func mouseExited(with event: NSEvent) { highlighted = false; needsDisplay = true }
+    override func mouseEntered(with event: NSEvent) {
+        highlighted = true
+        needsDisplay = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        highlighted = false
+        needsDisplay = true
+    }
 
     override func mouseUp(with event: NSEvent) {
         // Only act if released inside the row; keep the menu open afterwards.
-        guard bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        guard bounds.contains(point) else { return }
         onToggle()
         needsDisplay = true
     }
@@ -83,34 +92,10 @@ final class ProviderToggleView: NSView {
         if isEnabled() {
             draw("✓", at: checkX, color: primary)
         }
-        let labelX: CGFloat
-        if let badge {
-            drawBadge(badge, at: NSRect(x: nameX, y: (h - 13) / 2, width: 19, height: 13), highlighted: highlighted)
-            labelX = nameX + badgeWidth
-        } else {
-            labelX = nameX
-        }
+        let labelX = nameX
         draw(label, at: labelX, color: primary)
         if !hint.isEmpty {
             draw(hint, at: labelX + textWidth(label) + hintGap, color: secondary)
         }
-    }
-
-    private func drawBadge(_ value: String, at rect: NSRect, highlighted: Bool) {
-        let background = highlighted ? NSColor.white.withAlphaComponent(0.22) : NSColor.controlAccentColor
-        let foreground = highlighted ? NSColor.white : NSColor.white
-        background.setFill()
-        NSBezierPath(roundedRect: rect, xRadius: 4, yRadius: 4).fill()
-
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 8, weight: .bold),
-            .foregroundColor: foreground
-        ]
-        let text = String(value.prefix(2)).uppercased() as NSString
-        let size = text.size(withAttributes: attributes)
-        text.draw(
-            at: NSPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2),
-            withAttributes: attributes
-        )
     }
 }

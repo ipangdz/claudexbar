@@ -3,6 +3,15 @@
 All notable changes to ClaudexBar are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Changed
+- Simplified Codex support to a single default account at `~/.codex/auth.json`.
+- Removed Codex account hiding, hidden-account restore, manual account rescan,
+  account badges, and per-account smart-switch detection.
+- Kept provider-level enable/disable, paused/off, smart switching, and re-auth
+  for the two supported providers: Codex and Claude Code.
+
 ## [0.1.0] — 2026-06-03
 
 Initial release.

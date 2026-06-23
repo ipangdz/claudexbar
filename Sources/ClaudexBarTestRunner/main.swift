@@ -69,11 +69,9 @@ func testCodexUsageResponseParsing() throws {
     try expect(snapshot.secondary.resetAt == now.addingTimeInterval(395_000), "Codex secondary reset")
 }
 
-func testCodexAccountDiscoveryScansDefaultAndSuffixedHomes() throws {
+func testCodexAccountDiscoveryUsesOnlyDefaultHome() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    let t3Caches = root.appendingPathComponent(".t3/caches")
     defer { try? FileManager.default.removeItem(at: root) }
-    try FileManager.default.createDirectory(at: t3Caches, withIntermediateDirectories: true)
 
     func writeAccount(_ folder: String, accountID: String) throws {
         let dir = root.appendingPathComponent(folder)
@@ -85,100 +83,12 @@ func testCodexAccountDiscoveryScansDefaultAndSuffixedHomes() throws {
     try writeAccount(".codex", accountID: "default-id")
     try writeAccount(".codex_argun", accountID: "argun-id")
     try FileManager.default.createDirectory(at: root.appendingPathComponent(".codex_empty"), withIntermediateDirectories: true)
-    try Data(#"{"displayName":"Argun","auth":{"email":"argun@example.com"}}"#.utf8)
-        .write(to: t3Caches.appendingPathComponent("codex_argun.json"))
 
-    let accounts = CodexAccountDiscovery(homeDirectory: root, t3CacheDirectory: t3Caches).discover()
+    let account = CodexAccountDiscovery(homeDirectory: root).defaultAccount()
 
-    try expect(accounts.map(\.id) == ["default-id", "argun-id"], "discovers default first, then suffixed valid homes")
-    try expect(accounts[0].displayName == "Codex", "default display name stays compact")
-    try expect(accounts[0].initials == nil, "default account has no menu bar badge")
-    try expect(accounts[1].displayName == "Argun", "suffixed account uses T3 display name")
-    try expect(accounts[1].initials == "AR", "suffixed account gets initials")
-    try expect(accounts[1].authURL.path.hasSuffix(".codex_argun/auth.json"), "auth URL points at suffixed home")
-}
-
-func testCodexAccountActivityDetectorSelectsMostRecentAccountHome() throws {
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: root) }
-
-    func account(_ folder: String, id: String) throws -> CodexAccount {
-        let dir = root.appendingPathComponent(folder)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        try Data(#"{"tokens":{"access_token":"dummy"},"account_id":"\#(id)"}"#.utf8)
-            .write(to: dir.appendingPathComponent("auth.json"))
-        return CodexAccount(id: id, homeURL: dir, displayName: folder, isDefault: folder == ".codex")
-    }
-
-    let defaultAccount = try account(".codex", id: "default-id")
-    let argunAccount = try account(".codex_argun", id: "argun-id")
-    let now = Date(timeIntervalSince1970: 10_000)
-
-    let defaultIndex = defaultAccount.homeURL.appendingPathComponent("session_index.jsonl")
-    let argunIndex = argunAccount.homeURL.appendingPathComponent("session_index.jsonl")
-    try Data("default".utf8).write(to: defaultIndex)
-    try Data("argun".utf8).write(to: argunIndex)
-    try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(-120)], ofItemAtPath: defaultIndex.path)
-    try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(-20)], ofItemAtPath: argunIndex.path)
-
-    let detector = CodexAccountActivityDetector()
-    let recent = detector.recentAccount(in: [defaultAccount, argunAccount], now: now)
-
-    try expect(recent?.id == "argun-id", "most recent suffixed Codex home is selected")
-}
-
-func testCodexAccountActivityDetectorIgnoresDefaultLogFilesForAccountChoice() throws {
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: root) }
-
-    func account(_ folder: String, id: String) throws -> CodexAccount {
-        let dir = root.appendingPathComponent(folder)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        try Data(#"{"tokens":{"access_token":"dummy"},"account_id":"\#(id)"}"#.utf8)
-            .write(to: dir.appendingPathComponent("auth.json"))
-        return CodexAccount(id: id, homeURL: dir, displayName: folder, isDefault: folder == ".codex")
-    }
-
-    let defaultAccount = try account(".codex", id: "default-id")
-    let argunAccount = try account(".codex_argun", id: "argun-id")
-    let now = Date(timeIntervalSince1970: 20_000)
-
-    let defaultLog = defaultAccount.homeURL.appendingPathComponent("logs_2.sqlite-wal")
-    let argunIndex = argunAccount.homeURL.appendingPathComponent("session_index.jsonl")
-    try Data("default-log".utf8).write(to: defaultLog)
-    try Data("argun".utf8).write(to: argunIndex)
-    try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(-5)], ofItemAtPath: defaultLog.path)
-    try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(-20)], ofItemAtPath: argunIndex.path)
-
-    let recent = CodexAccountActivityDetector().recentAccount(in: [defaultAccount, argunAccount], now: now)
-
-    try expect(recent?.id == "argun-id", "default log files do not override account session activity")
-}
-
-func testCodexAccountProcessMatcherUsesCodexHomeEnvironment() throws {
-    let root = URL(fileURLWithPath: "/Users/example")
-    let defaultAccount = CodexAccount(
-        id: "default-id",
-        homeURL: root.appendingPathComponent(".codex"),
-        displayName: "Codex",
-        isDefault: true
-    )
-    let argunAccount = CodexAccount(
-        id: "argun-id",
-        homeURL: root.appendingPathComponent(".codex_argun"),
-        displayName: "Argun",
-        isDefault: false
-    )
-
-    let account = CodexAccountProcessMatcher.account(
-        inProcessLines: [
-            "/Applications/Codex.app/Contents/Resources/codex app-server CODEX_HOME=/Users/example/.codex",
-            "/Applications/Codex.app/Contents/Resources/codex app-server CODEX_HOME=/Users/example/.codex_argun"
-        ],
-        accounts: [defaultAccount, argunAccount]
-    )
-
-    try expect(account?.id == "argun-id", "non-default CODEX_HOME process selects matching Codex account")
+    try expect(account.id == "codex", "uses one stable Codex account id")
+    try expect(account.displayName == "Codex", "default display name stays compact")
+    try expect(account.authURL.path.hasSuffix(".codex/auth.json"), "auth URL points at the default home")
 }
 
 func testClaudeUsageResponseParsingUsesSevenDayFallback() throws {
@@ -320,29 +230,6 @@ func testProviderSelectionCanBeEmptyForPausedMode() throws {
     try expect(selection.enabledProviders.isEmpty, "last provider can be disabled for paused mode")
     try expect(selection.activeProvider == .claude, "active provider remains stable while paused")
     try expect(selection.nextProvider() == .claude, "empty selection has no cycle target")
-}
-
-func testCodexAccountSelectionAllowsNoCodexWhenClaudeIsEnabled() throws {
-    let account = CodexAccount(
-        id: "default-id",
-        homeURL: URL(fileURLWithPath: "/Users/example/.codex"),
-        displayName: "Codex",
-        isDefault: true
-    )
-
-    let disabledForClaude = CodexAccountSelection.enabledAccounts(
-        from: [account],
-        enabledIDs: [],
-        isClaudeEnabled: true
-    )
-    try expect(disabledForClaude.isEmpty, "explicit empty Codex selection stays empty when Claude is enabled")
-
-    let fallbackForCodexOnly = CodexAccountSelection.enabledAccounts(
-        from: [account],
-        enabledIDs: [],
-        isClaudeEnabled: false
-    )
-    try expect(fallbackForCodexOnly.isEmpty, "explicit empty Codex selection stays empty for paused mode")
 }
 
 func testSmartSwitchWaitsForStableCandidateBeforeSwitching() throws {
@@ -570,15 +457,124 @@ func testCrossProviderHintRequiresTwentyFivePointAdvantage() throws {
     try expect(decisions.first?.inactiveProviderHint?.remainingPercent == 70, "cross-provider hint remaining")
 }
 
+func testRecoveryNotificationFiresOnceAfterDepletedWindowRestores() throws {
+    var store = NotificationCycleStore()
+    let evaluator = NotificationEvaluator(threshold: .twentyPercent)
+    let depletedReset = Date(timeIntervalSince1970: 2_000)
+    let restoredReset = Date(timeIntervalSince1970: 20_000)
+    let depleted = UsageSnapshot(
+        primary: UsageWindow(windowLabel: "5h", remainingPercent: 0, resetAt: depletedReset),
+        secondary: UsageWindow(windowLabel: "7d", remainingPercent: 80, resetAt: restoredReset),
+        fetchedAt: Date(timeIntervalSince1970: 1_000)
+    )
+    let restored = UsageSnapshot(
+        primary: UsageWindow(windowLabel: "5h", remainingPercent: 100, resetAt: restoredReset),
+        secondary: UsageWindow(windowLabel: "7d", remainingPercent: 80, resetAt: restoredReset),
+        fetchedAt: Date(timeIntervalSince1970: 2_100)
+    )
+
+    let beforeReset = evaluator.recoveryDecisions(
+        activeProvider: .codex,
+        snapshots: [.codex: depleted],
+        store: &store,
+        now: Date(timeIntervalSince1970: 1_000)
+    )
+    let afterReset = evaluator.recoveryDecisions(
+        activeProvider: .codex,
+        snapshots: [.codex: restored],
+        store: &store,
+        now: Date(timeIntervalSince1970: 2_100)
+    )
+    let duplicateRefresh = evaluator.recoveryDecisions(
+        activeProvider: .codex,
+        snapshots: [.codex: restored],
+        store: &store,
+        now: Date(timeIntervalSince1970: 2_200)
+    )
+
+    try expect(beforeReset.isEmpty, "depleted window only arms recovery")
+    try expect(afterReset.count == 1, "restored window notifies once")
+    try expect(afterReset.first?.provider == .codex, "recovery provider")
+    try expect(afterReset.first?.windowKind == .primary, "recovery window kind")
+    try expect(afterReset.first?.window.remainingPercent == 100, "recovery remaining percent")
+    try expect(duplicateRefresh.isEmpty, "recovery is deduped for the restored cycle")
+}
+
+func testRecoveryNotificationRespectsNotificationOffSetting() throws {
+    var store = NotificationCycleStore()
+    let evaluator = NotificationEvaluator(threshold: .off)
+    let depleted = UsageSnapshot(
+        primary: UsageWindow(windowLabel: "5h", remainingPercent: 0, resetAt: Date(timeIntervalSince1970: 2_000)),
+        secondary: UsageWindow(windowLabel: "7d", remainingPercent: 80, resetAt: Date(timeIntervalSince1970: 20_000)),
+        fetchedAt: Date(timeIntervalSince1970: 1_000)
+    )
+    let restored = UsageSnapshot(
+        primary: UsageWindow(windowLabel: "5h", remainingPercent: 100, resetAt: Date(timeIntervalSince1970: 20_000)),
+        secondary: UsageWindow(windowLabel: "7d", remainingPercent: 80, resetAt: Date(timeIntervalSince1970: 20_000)),
+        fetchedAt: Date(timeIntervalSince1970: 2_100)
+    )
+
+    _ = evaluator.recoveryDecisions(
+        activeProvider: .codex,
+        snapshots: [.codex: depleted],
+        store: &store,
+        now: Date(timeIntervalSince1970: 1_000)
+    )
+    let afterReset = evaluator.recoveryDecisions(
+        activeProvider: .codex,
+        snapshots: [.codex: restored],
+        store: &store,
+        now: Date(timeIntervalSince1970: 2_100)
+    )
+
+    try expect(afterReset.isEmpty, "notification off suppresses recovery")
+}
+
+func testRecoveryNotificationEvaluatesAllEnabledSources() throws {
+    var store = NotificationCycleStore()
+    let evaluator = NotificationEvaluator(threshold: .twentyPercent)
+    let depleted = UsageSnapshot(
+        primary: UsageWindow(windowLabel: "5h", remainingPercent: 0, resetAt: Date(timeIntervalSince1970: 2_000)),
+        secondary: UsageWindow(windowLabel: "7d", remainingPercent: 80, resetAt: Date(timeIntervalSince1970: 20_000)),
+        fetchedAt: Date(timeIntervalSince1970: 1_000)
+    )
+    let restored = UsageSnapshot(
+        primary: UsageWindow(windowLabel: "5h", remainingPercent: 100, resetAt: Date(timeIntervalSince1970: 20_000)),
+        secondary: UsageWindow(windowLabel: "7d", remainingPercent: 80, resetAt: Date(timeIntervalSince1970: 20_000)),
+        fetchedAt: Date(timeIntervalSince1970: 2_100)
+    )
+    let healthyCodex = UsageSnapshot(
+        primary: UsageWindow(windowLabel: "5h", remainingPercent: 60, resetAt: Date(timeIntervalSince1970: 8_000)),
+        secondary: UsageWindow(windowLabel: "7d", remainingPercent: 70, resetAt: Date(timeIntervalSince1970: 20_000)),
+        fetchedAt: Date(timeIntervalSince1970: 2_100)
+    )
+
+    _ = evaluator.recoveryDecisions(
+        sources: [
+            NotificationSourceSnapshot(provider: .claude, snapshot: depleted)
+        ],
+        store: &store,
+        now: Date(timeIntervalSince1970: 1_000)
+    )
+    let decisions = evaluator.recoveryDecisions(
+        sources: [
+            NotificationSourceSnapshot(provider: .codex, snapshot: healthyCodex),
+            NotificationSourceSnapshot(provider: .claude, snapshot: restored)
+        ],
+        store: &store,
+        now: Date(timeIntervalSince1970: 2_100)
+    )
+
+    try expect(decisions.count == 1, "recovery evaluates inactive provider source")
+    try expect(decisions.first?.provider == .claude, "inactive Claude recovery provider")
+}
+
 let tests: [(String, () throws -> Void)] = [
     ("reset labels use absolute reset dates", testResetLabelsUseAbsoluteResetDates),
     ("countdown changes without new fetch", testCountdownChangesWhenNowChangesWithoutNewFetch),
     ("full window label vs exact partial percent", testFullWindowUsesWindowLabelButPartialShowsExactPercent),
     ("Codex usage response parsing", testCodexUsageResponseParsing),
-    ("Codex account discovery", testCodexAccountDiscoveryScansDefaultAndSuffixedHomes),
-    ("Codex account activity detection", testCodexAccountActivityDetectorSelectsMostRecentAccountHome),
-    ("Codex account activity ignores logs", testCodexAccountActivityDetectorIgnoresDefaultLogFilesForAccountChoice),
-    ("Codex account process matcher", testCodexAccountProcessMatcherUsesCodexHomeEnvironment),
+    ("Codex default account discovery", testCodexAccountDiscoveryUsesOnlyDefaultHome),
     ("Claude usage response parsing", testClaudeUsageResponseParsingUsesSevenDayFallback),
     ("Claude env OAuth token", testClaudeCredentialReaderAcceptsOAuthEnvironmentToken),
     ("PKCE S256 challenge", testPKCEChallengeMatchesRFC7636Vector),
@@ -591,7 +587,6 @@ let tests: [(String, () throws -> Void)] = [
     ("Secret scanner redaction", testSecretScannerRedactsTokenShapedStringsFromLogMessages),
     ("Provider selection model", testProviderSelectionCyclesOnlyEnabledProviders),
     ("Provider selection paused mode", testProviderSelectionCanBeEmptyForPausedMode),
-    ("Codex account selection can be empty with Claude", testCodexAccountSelectionAllowsNoCodexWhenClaudeIsEnabled),
     ("Smart switch stable candidate", testSmartSwitchWaitsForStableCandidateBeforeSwitching),
     ("Smart switch tie and weak signal", testSmartSwitchDoesNotSwitchOnTieOrWeakProcessOnlySignal),
     ("Smart switch foreground beats recent activity", testSmartSwitchForegroundBeatsConflictingRecentActivity),
@@ -600,7 +595,10 @@ let tests: [(String, () throws -> Void)] = [
     ("threshold notification dedupe", testThresholdCreatesOneUsageNotificationPerCooldown),
     ("notification cooldown starts on delivery", testNotificationCooldownStartsOnlyWhenNotificationIsDelivered),
     ("default usage notification cooldown", testDefaultUsageNotificationCooldownIsThreeHours),
-    ("cross-provider hint", testCrossProviderHintRequiresTwentyFivePointAdvantage)
+    ("cross-provider hint", testCrossProviderHintRequiresTwentyFivePointAdvantage),
+    ("recovery notification fires once", testRecoveryNotificationFiresOnceAfterDepletedWindowRestores),
+    ("recovery notification off setting", testRecoveryNotificationRespectsNotificationOffSetting),
+    ("recovery notification all enabled sources", testRecoveryNotificationEvaluatesAllEnabledSources)
 ]
 
 for (name, test) in tests {

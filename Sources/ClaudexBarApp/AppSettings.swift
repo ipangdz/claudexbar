@@ -6,6 +6,14 @@ final class AppSettings {
 
     private let defaults = UserDefaults.standard
 
+    func removeLegacyCodexAccountSettings() {
+        [
+            "activeCodexAccountID",
+            "enabledCodexAccountIDs",
+            "hiddenCodexAccountIDs"
+        ].forEach(defaults.removeObject(forKey:))
+    }
+
     var activeProvider: ProviderID {
         get {
             ProviderID(rawValue: defaults.string(forKey: "activeProvider") ?? "") ?? .codex
@@ -25,24 +33,6 @@ final class AppSettings {
         }
         set {
             defaults.set(newValue.map(\.rawValue), forKey: "enabledProviders")
-        }
-    }
-
-    var activeCodexAccountID: String? {
-        get {
-            defaults.string(forKey: "activeCodexAccountID")
-        }
-        set {
-            defaults.set(newValue, forKey: "activeCodexAccountID")
-        }
-    }
-
-    var enabledCodexAccountIDs: [String]? {
-        get {
-            defaults.array(forKey: "enabledCodexAccountIDs") as? [String]
-        }
-        set {
-            defaults.set(newValue, forKey: "enabledCodexAccountIDs")
         }
     }
 
