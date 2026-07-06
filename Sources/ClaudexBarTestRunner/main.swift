@@ -69,28 +69,6 @@ func testCodexUsageResponseParsing() throws {
     try expect(snapshot.secondary.resetAt == now.addingTimeInterval(395_000), "Codex secondary reset")
 }
 
-func testCodexAccountDiscoveryUsesOnlyDefaultHome() throws {
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: root) }
-
-    func writeAccount(_ folder: String, accountID: String) throws {
-        let dir = root.appendingPathComponent(folder)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let auth = Data(#"{"tokens":{"access_token":"dummy"},"account_id":"\#(accountID)"}"#.utf8)
-        try auth.write(to: dir.appendingPathComponent("auth.json"))
-    }
-
-    try writeAccount(".codex", accountID: "default-id")
-    try writeAccount(".codex_argun", accountID: "argun-id")
-    try FileManager.default.createDirectory(at: root.appendingPathComponent(".codex_empty"), withIntermediateDirectories: true)
-
-    let account = CodexAccountDiscovery(homeDirectory: root).defaultAccount()
-
-    try expect(account.id == "codex", "uses one stable Codex account id")
-    try expect(account.displayName == "Codex", "default display name stays compact")
-    try expect(account.authURL.path.hasSuffix(".codex/auth.json"), "auth URL points at the default home")
-}
-
 func testClaudeUsageResponseParsingUsesSevenDayFallback() throws {
     let data = try fixtureData("claude_usage")
     let snapshot = try ClaudeProvider.parseUsageResponse(data, fetchedAt: Date(timeIntervalSince1970: 1_700_000_000))
@@ -574,7 +552,6 @@ let tests: [(String, () throws -> Void)] = [
     ("countdown changes without new fetch", testCountdownChangesWhenNowChangesWithoutNewFetch),
     ("full window label vs exact partial percent", testFullWindowUsesWindowLabelButPartialShowsExactPercent),
     ("Codex usage response parsing", testCodexUsageResponseParsing),
-    ("Codex default account discovery", testCodexAccountDiscoveryUsesOnlyDefaultHome),
     ("Claude usage response parsing", testClaudeUsageResponseParsingUsesSevenDayFallback),
     ("Claude env OAuth token", testClaudeCredentialReaderAcceptsOAuthEnvironmentToken),
     ("PKCE S256 challenge", testPKCEChallengeMatchesRFC7636Vector),

@@ -8,8 +8,8 @@ final class StatusBarController: NSObject {
     private let settings = AppSettings.shared
     private let logger = SanitizedLogger.shared
     private let smartSwitchDetector = SmartProviderDetector()
-    private let codexAccount = CodexAccountDiscovery().defaultAccount()
     private let providers: [ProviderID: any UsageProvider] = [
+        .codex: CodexProvider(),
         // Persist rotated tokens after every refresh so ClaudexBar's own
         // credential stays valid without re-login.
         .claude: ClaudeProvider(persistRefreshed: { credentials in
@@ -17,13 +17,10 @@ final class StatusBarController: NSObject {
         })
     ]
 
-    private var codexSnapshot: UsageSnapshot?
-    private var codexError: UsageError?
-    private var codexStatusOverride: String?
-    private var codexReauthProcess: Process?
     private var snapshots: [ProviderID: UsageSnapshot] = [:]
     private var errors: [ProviderID: UsageError] = [:]
     private var statusOverrides: [ProviderID: String] = [:]
+    private var codexReauthProcess: Process?
     private var claudeReauthInProgress = false
     private var appearanceObservation: NSKeyValueObservation?
     private var refreshTimer: Timer?
@@ -31,7 +28,7 @@ final class StatusBarController: NSObject {
     private var smartSwitchTimer: Timer?
     private var smartSwitchEngine: SmartProviderSwitchEngine?
     private var smartSwitchDetectionInProgress = false
-    private var refreshesInFlight: Set<UsageSource> = []
+    private var refreshesInFlight: Set<ProviderID> = []
     private var presentedMenu: NSMenu?
     private var notificationStore = NotificationCycleStore()
     private var lastAuthNotificationAt: [ProviderID: Date] = [:]
@@ -53,11 +50,6 @@ final class StatusBarController: NSObject {
         }
     }
 
-    private enum UsageSource: Hashable {
-        case codex
-        case claude
-    }
-
     func start() {
         AppPaths.ensureDirectories()
         settings.removeLegacyCodexAccountSettings()
@@ -70,31 +62,8 @@ final class StatusBarController: NSObject {
         checkForUpdatesQuietly()
     }
 
-    private func enabledSources() -> [UsageSource] {
-        var sources: [UsageSource] = []
-        if providerSelection.enabledProviders.contains(.codex) {
-            sources.append(.codex)
-        }
-        if providerSelection.enabledProviders.contains(.claude) {
-            sources.append(.claude)
-        }
-        return sources
-    }
-
-    private func currentSource() -> UsageSource? {
-        if activeProvider == .claude {
-            return providerSelection.enabledProviders.contains(.claude) ? .claude : nil
-        }
-        return providerSelection.enabledProviders.contains(.codex) ? .codex : nil
-    }
-
-    private func setActiveSource(_ source: UsageSource) {
-        switch source {
-        case .codex:
-            activeProvider = .codex
-        case .claude:
-            activeProvider = .claude
-        }
+    private var activeEnabledProvider: ProviderID? {
+        providerSelection.enabledProviders.contains(activeProvider) ? activeProvider : nil
     }
 
     private var appVersion: String {
@@ -148,20 +117,19 @@ final class StatusBarController: NSObject {
     }
 
     private func toggleProvider() {
-        let sources = enabledSources()
-        guard sources.count > 1 else { return }
-        let current = currentSource()
-        let index = current.flatMap { sources.firstIndex(of: $0) } ?? -1
-        let next = sources[(index + 1) % sources.count]
-        setActiveSource(next)
-        smartSwitchEngine?.recordManualSelection(activeProvider, now: Date())
+        let enabled = providerSelection.enabledProviders
+        guard enabled.count > 1 else { return }
+        let index = enabled.firstIndex(of: activeProvider) ?? -1
+        let next = enabled[(index + 1) % enabled.count]
+        activeProvider = next
+        smartSwitchEngine?.recordManualSelection(next, now: Date())
         updateImage()
-        refreshActiveSource()
+        refreshActiveProvider()
     }
 
     private func beginSmartSwitchEvaluation() {
         guard settings.smartSwitchEnabled else { return }
-        guard enabledSources().count > 1 else { return }
+        guard providerSelection.enabledProviders.count > 1 else { return }
         guard !smartSwitchDetectionInProgress else { return }
         smartSwitchDetectionInProgress = true
 
@@ -185,11 +153,8 @@ final class StatusBarController: NSObject {
         smartSwitchDetectionInProgress = false
 
         guard settings.smartSwitchEnabled else { return }
-        let sources = enabledSources()
-        guard !sources.isEmpty else { return }
-
         let selection = providerSelection
-        guard sources.count > 1 else { return }
+        guard selection.enabledProviders.count > 1 else { return }
 
         if smartSwitchEngine == nil {
             smartSwitchEngine = SmartProviderSwitchEngine(activeProvider: activeProvider)
@@ -208,20 +173,16 @@ final class StatusBarController: NSObject {
         guard let provider = smartSwitchEngine?.evaluate(signals: signals, now: Date()) else { return }
         activeProvider = provider
         updateImage()
-        refreshActiveSource(notify: false)
+        refreshActiveProvider(notify: false)
     }
 
     private func refreshAll() {
-        guard !enabledSources().isEmpty else {
+        let enabled = providerSelection.enabledProviders
+        guard !enabled.isEmpty else {
             updateImage()
             return
         }
-        if providerSelection.enabledProviders.contains(.codex) {
-            refreshCodex()
-        }
-        if providerSelection.enabledProviders.contains(.claude) {
-            refresh(provider: .claude)
-        }
+        enabled.forEach { refresh(provider: $0) }
     }
 
     /// Manual "Refresh All": pulse the pill so the user gets clear feedback that
@@ -246,13 +207,12 @@ final class StatusBarController: NSObject {
 
     private func refresh(provider: ProviderID, notify: Bool = true) {
         guard let usageProvider = providers[provider] else { return }
-        let source = UsageSource.claude
-        guard !refreshesInFlight.contains(source) else { return }
-        refreshesInFlight.insert(source)
+        guard !refreshesInFlight.contains(provider) else { return }
+        refreshesInFlight.insert(provider)
         Task {
             let result = await usageProvider.fetchUsage()
             await MainActor.run {
-                refreshesInFlight.remove(source)
+                refreshesInFlight.remove(provider)
                 switch result {
                 case .success(let snapshot):
                     snapshots[provider] = snapshot
@@ -270,61 +230,18 @@ final class StatusBarController: NSObject {
         }
     }
 
-    private func refreshActiveSource(notify: Bool = true) {
-        guard let source = currentSource() else {
+    private func refreshActiveProvider(notify: Bool = true) {
+        guard let provider = activeEnabledProvider else {
             updateImage()
             return
         }
-        switch source {
-        case .codex:
-            refreshCodex(notify: notify)
-        case .claude:
-            refresh(provider: .claude, notify: notify)
-        }
-    }
-
-    private func refreshCodex(notify: Bool = true) {
-        let source = UsageSource.codex
-        guard !refreshesInFlight.contains(source) else { return }
-        refreshesInFlight.insert(source)
-        let provider = CodexProvider(authReader: CodexAuthReader(authURL: codexAccount.authURL))
-        Task {
-            let result = await provider.fetchUsage()
-            await MainActor.run {
-                refreshesInFlight.remove(source)
-                switch result {
-                case .success(let snapshot):
-                    codexSnapshot = snapshot
-                    codexError = nil
-                    logger.log(provider: .codex, message: "usage ok")
-                case .failure(let error):
-                    codexError = error
-                    logger.log(provider: .codex, message: error.sanitizedDescription)
-                }
-                updateImage()
-                if notify {
-                    evaluateNotifications()
-                }
-            }
-        }
+        refresh(provider: provider, notify: notify)
     }
 
     private func updateImage() {
         guard let button = statusItem.button else { return }
-        guard !enabledSources().isEmpty else {
+        guard !providerSelection.enabledProviders.isEmpty else {
             button.image = StatusPillRenderer.pausedImage()
-            return
-        }
-        if activeProvider == .codex {
-            if let override = codexStatusOverride {
-                button.image = StatusPillRenderer.image(provider: .codex, status: override)
-                return
-            }
-            if let snapshot = codexSnapshot, codexError == nil || codexError!.isTransient {
-                button.image = StatusPillRenderer.image(provider: .codex, snapshot: snapshot)
-                return
-            }
-            button.image = StatusPillRenderer.image(provider: .codex, status: codexError?.statusLabel ?? "wait")
             return
         }
 
@@ -407,14 +324,6 @@ final class StatusBarController: NSObject {
     /// Inline status shown after the provider name: remaining percentages when
     /// usage is available, otherwise a status word (`login`/`auth`/`net`/`err`).
     private func providerStatusHint(_ provider: ProviderID) -> String {
-        if provider == .codex {
-            if let override = codexStatusOverride { return override }
-            if let snapshot = codexSnapshot, codexError == nil {
-                return "\(snapshot.primary.remainingPercent)% · \(snapshot.secondary.remainingPercent)%"
-            }
-            if let error = codexError { return error.statusLabel }
-            return "wait"
-        }
         if let override = statusOverrides[provider] { return override }
         if let snapshot = snapshots[provider], errors[provider] == nil {
             return "\(snapshot.primary.remainingPercent)% · \(snapshot.secondary.remainingPercent)%"
@@ -470,25 +379,20 @@ final class StatusBarController: NSObject {
     }
 
     private func toggleProviderEnabled(_ provider: ProviderID) {
-        let wasPaused = currentSource() == nil
+        let wasPaused = activeEnabledProvider == nil
         var selection = providerSelection
         selection.toggleEnabled(provider)
         providerSelection = selection
         if wasPaused, providerSelection.enabledProviders.contains(provider) {
             activeProvider = provider
         }
-        if currentSource() != nil {
+        if activeEnabledProvider != nil {
             smartSwitchEngine?.recordExternalSelection(activeProvider)
         }
         updateImage()
         scheduleTimers()
         if providerSelection.enabledProviders.contains(provider) {
-            switch provider {
-            case .codex:
-                refreshCodex()
-            case .claude:
-                refresh(provider: provider)
-            }
+            refresh(provider: provider)
         }
     }
 
@@ -521,7 +425,7 @@ final class StatusBarController: NSObject {
     private func runCodexReauth() {
         guard codexReauthProcess == nil else { return }
         guard let executableURL = codexExecutableURL() else {
-            codexError = .authExpired
+            errors[.codex] = .authExpired
             notifyReauthFailed(provider: .codex, reason: "codex_not_found")
             updateImage()
             return
@@ -530,7 +434,9 @@ final class StatusBarController: NSObject {
         let process = Process()
         process.executableURL = executableURL
         process.arguments = ["login"]
-        process.environment = ProcessInfo.processInfo.environment.merging(["CODEX_HOME": codexAccount.homeURL.path]) { _, new in new }
+        process.environment = ProcessInfo.processInfo.environment.merging(
+            ["CODEX_HOME": FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex").path]
+        ) { _, new in new }
         let outputPipe = Pipe()
         let errorPipe = Pipe()
         process.standardOutput = outputPipe
@@ -541,8 +447,8 @@ final class StatusBarController: NSObject {
         errorPipe.fileHandleForReading.readabilityHandler = { handle in authURLOpener.handle(handle.availableData) }
 
         codexReauthProcess = process
-        codexStatusOverride = "login"
-        codexError = nil
+        statusOverrides[.codex] = "login"
+        errors[.codex] = nil
         updateImage()
 
         process.terminationHandler = { [weak self] process in
@@ -551,11 +457,11 @@ final class StatusBarController: NSObject {
                 outputPipe.fileHandleForReading.readabilityHandler = nil
                 errorPipe.fileHandleForReading.readabilityHandler = nil
                 self.codexReauthProcess = nil
-                self.codexStatusOverride = nil
+                self.statusOverrides[.codex] = nil
                 if process.terminationStatus == 0 {
-                    self.refreshCodex()
+                    self.refresh(provider: .codex)
                 } else {
-                    self.codexError = .authExpired
+                    self.errors[.codex] = .authExpired
                     self.notifyReauthFailed(provider: .codex, reason: "login_exit_\(process.terminationStatus)")
                     self.updateImage()
                 }
@@ -566,8 +472,8 @@ final class StatusBarController: NSObject {
             try process.run()
         } catch {
             codexReauthProcess = nil
-            codexStatusOverride = nil
-            codexError = .authExpired
+            statusOverrides[.codex] = nil
+            errors[.codex] = .authExpired
             notifyReauthFailed(provider: .codex, reason: "login_start_failed")
             updateImage()
         }
@@ -709,16 +615,11 @@ final class StatusBarController: NSObject {
 
     private func evaluateNotifications() {
         guard notificationsAvailable else { return }
-        guard currentSource() != nil else { return }
+        guard activeEnabledProvider != nil else { return }
         let evaluator = NotificationEvaluator(threshold: settings.notificationThreshold)
-        var notificationSnapshots = snapshots
-        if activeProvider == .codex,
-           let snapshot = codexSnapshot {
-            notificationSnapshots[.codex] = snapshot
-        }
         let decisions = evaluator.decisions(
             activeProvider: activeProvider,
-            snapshots: notificationSnapshots,
+            snapshots: snapshots,
             store: &notificationStore,
             now: Date()
         )
@@ -730,13 +631,7 @@ final class StatusBarController: NSObject {
         )
         recoveryDecisions.forEach(sendRecoveryNotification)
 
-        let activeError: UsageError?
-        if activeProvider == .codex {
-            activeError = codexError
-        } else {
-            activeError = errors[activeProvider]
-        }
-        if let error = activeError, error.statusLabel == "auth" {
+        if let error = errors[activeProvider], error.statusLabel == "auth" {
             sendAuthNotification(provider: activeProvider)
         }
     }
@@ -766,17 +661,9 @@ final class StatusBarController: NSObject {
     }
 
     private func recoveryNotificationSources() -> [NotificationSourceSnapshot] {
-        var sources: [NotificationSourceSnapshot] = []
-        if providerSelection.enabledProviders.contains(.claude),
-           let snapshot = snapshots[.claude] {
-            sources.append(NotificationSourceSnapshot(provider: .claude, snapshot: snapshot))
+        providerSelection.enabledProviders.compactMap { provider in
+            snapshots[provider].map { NotificationSourceSnapshot(provider: provider, snapshot: $0) }
         }
-        if providerSelection.enabledProviders.contains(.codex) {
-            if let snapshot = codexSnapshot {
-                sources.append(NotificationSourceSnapshot(provider: .codex, snapshot: snapshot))
-            }
-        }
-        return sources
     }
 
     private func sendAuthNotification(provider: ProviderID) {
