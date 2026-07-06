@@ -210,129 +210,125 @@ func testProviderSelectionCanBeEmptyForPausedMode() throws {
     try expect(selection.nextProvider() == .claude, "empty selection has no cycle target")
 }
 
-func testSmartSwitchWaitsForStableCandidateBeforeSwitching() throws {
-    let start = Date(timeIntervalSince1970: 1_000)
-    var engine = SmartProviderSwitchEngine(
-        activeProvider: .codex,
-        minimumStableDuration: 20,
-        manualOverrideDuration: 600,
-        scoreAdvantageThreshold: 30,
-        switchCooldown: 120
-    )
+func makeSnapshot(remaining: Int, at fetchedAt: Date = Date(timeIntervalSince1970: 0)) -> UsageSnapshot {
+    let window = UsageWindow(windowLabel: "5h", remainingPercent: remaining, resetAt: nil)
+    return UsageSnapshot(primary: window, secondary: window, fetchedAt: fetchedAt)
+}
 
-    let early = engine.evaluate(
-        signals: SmartProviderSignals(
-            foregroundProvider: .claude,
-            recentActivityProvider: .claude,
-            runningProviders: [.claude]
-        ),
+func testUsageDeltaTrackerFindsSingleActiveProvider() throws {
+    var tracker = UsageDeltaTracker()
+    tracker.record(provider: .claude, snapshot: makeSnapshot(remaining: 90))
+    tracker.record(provider: .codex, snapshot: makeSnapshot(remaining: 80))
+    try expect(tracker.dominantProvider() == nil, "first snapshots produce no delta")
+
+    tracker.record(provider: .claude, snapshot: makeSnapshot(remaining: 85))
+    tracker.record(provider: .codex, snapshot: makeSnapshot(remaining: 80))
+    try expect(tracker.dominantProvider() == .claude, "only Claude consumed usage")
+}
+
+func testUsageDeltaTrackerLargerDeltaWinsAndTiesDoNothing() throws {
+    var tracker = UsageDeltaTracker()
+    tracker.record(provider: .claude, snapshot: makeSnapshot(remaining: 90))
+    tracker.record(provider: .codex, snapshot: makeSnapshot(remaining: 90))
+
+    tracker.record(provider: .claude, snapshot: makeSnapshot(remaining: 80))
+    tracker.record(provider: .codex, snapshot: makeSnapshot(remaining: 88))
+    try expect(tracker.dominantProvider() == .claude, "larger delta wins when both increase")
+
+    tracker.record(provider: .claude, snapshot: makeSnapshot(remaining: 75))
+    tracker.record(provider: .codex, snapshot: makeSnapshot(remaining: 83))
+    try expect(tracker.dominantProvider() == nil, "equal deltas produce no candidate")
+}
+
+func testUsageDeltaTrackerIgnoresWindowResets() throws {
+    var tracker = UsageDeltaTracker()
+    tracker.record(provider: .codex, snapshot: makeSnapshot(remaining: 5))
+    tracker.record(provider: .codex, snapshot: makeSnapshot(remaining: 100))
+    try expect(tracker.dominantProvider() == nil, "remaining going up (window reset) is not usage")
+}
+
+func testSmartSwitchForegroundNeedsStabilityThenSwitches() throws {
+    let start = Date(timeIntervalSince1970: 1_000)
+    var engine = SmartProviderSwitchEngine(activeProvider: .codex)
+
+    let first = engine.evaluate(
+        signals: SmartProviderSignals(foregroundProvider: .claude, usageDeltaProvider: nil),
         now: start
     )
-    try expect(early == nil, "candidate does not switch immediately")
+    try expect(first == nil, "foreground candidate does not switch immediately")
 
-    let stable = engine.evaluate(
-        signals: SmartProviderSignals(
-            foregroundProvider: .claude,
-            recentActivityProvider: .claude,
-            runningProviders: [.claude]
-        ),
-        now: start.addingTimeInterval(21)
+    let flicker = engine.evaluate(
+        signals: SmartProviderSignals(foregroundProvider: nil, usageDeltaProvider: nil),
+        now: start.addingTimeInterval(5)
     )
-    try expect(stable == .claude, "stable candidate switches after debounce")
-}
-
-func testSmartSwitchDoesNotSwitchOnTieOrWeakProcessOnlySignal() throws {
-    let now = Date(timeIntervalSince1970: 1_000)
-    var engine = SmartProviderSwitchEngine(
-        activeProvider: .codex,
-        minimumStableDuration: 20,
-        manualOverrideDuration: 600,
-        scoreAdvantageThreshold: 30,
-        switchCooldown: 120
-    )
-
-    let tie = engine.evaluate(
-        signals: SmartProviderSignals(
-            foregroundProvider: nil,
-            recentActivityProvider: nil,
-            runningProviders: [.codex, .claude]
-        ),
-        now: now.addingTimeInterval(60)
-    )
-    try expect(tie == nil, "equal running processes do not switch")
-
-    let weak = engine.evaluate(
-        signals: SmartProviderSignals(
-            foregroundProvider: nil,
-            recentActivityProvider: nil,
-            runningProviders: [.claude]
-        ),
-        now: now.addingTimeInterval(120)
-    )
-    try expect(weak == nil, "process-only signal is too weak to switch")
-}
-
-func testSmartSwitchForegroundBeatsConflictingRecentActivity() throws {
-    let start = Date(timeIntervalSince1970: 1_000)
-    var engine = SmartProviderSwitchEngine(
-        activeProvider: .codex,
-        minimumStableDuration: 20,
-        manualOverrideDuration: 600,
-        scoreAdvantageThreshold: 30,
-        switchCooldown: 120
-    )
+    try expect(flicker == nil, "losing foreground resets the debounce")
 
     _ = engine.evaluate(
-        signals: SmartProviderSignals(
-            foregroundProvider: .claude,
-            recentActivityProvider: .codex,
-            runningProviders: []
-        ),
+        signals: SmartProviderSignals(foregroundProvider: .claude, usageDeltaProvider: nil),
+        now: start.addingTimeInterval(10)
+    )
+    let stable = engine.evaluate(
+        signals: SmartProviderSignals(foregroundProvider: .claude, usageDeltaProvider: nil),
+        now: start.addingTimeInterval(21)
+    )
+    try expect(stable == .claude, "stable foreground switches after the debounce")
+    try expect(engine.activeProvider == .claude, "engine tracks the new active provider")
+}
+
+func testSmartSwitchForegroundBeatsUsageDelta() throws {
+    let start = Date(timeIntervalSince1970: 1_000)
+    var engine = SmartProviderSwitchEngine(activeProvider: .codex)
+
+    _ = engine.evaluate(
+        signals: SmartProviderSignals(foregroundProvider: .claude, usageDeltaProvider: .codex),
         now: start
     )
     let stable = engine.evaluate(
-        signals: SmartProviderSignals(
-            foregroundProvider: .claude,
-            recentActivityProvider: .codex,
-            runningProviders: []
-        ),
-        now: start.addingTimeInterval(21)
+        signals: SmartProviderSignals(foregroundProvider: .claude, usageDeltaProvider: .codex),
+        now: start.addingTimeInterval(11)
     )
-
-    try expect(stable == .claude, "foreground provider wins over conflicting recent activity")
+    try expect(stable == .claude, "foreground wins over a conflicting usage delta")
 }
 
-func testSmartSwitchManualOverrideSuppressesAutoSwitchTemporarily() throws {
+func testSmartSwitchUsageDeltaSwitchesWithoutForeground() throws {
     let start = Date(timeIntervalSince1970: 1_000)
-    var engine = SmartProviderSwitchEngine(
-        activeProvider: .codex,
-        minimumStableDuration: 20,
-        manualOverrideDuration: 600,
-        scoreAdvantageThreshold: 30,
-        switchCooldown: 120
+    var engine = SmartProviderSwitchEngine(activeProvider: .codex)
+
+    let switched = engine.evaluate(
+        signals: SmartProviderSignals(foregroundProvider: nil, usageDeltaProvider: .claude),
+        now: start
     )
+    try expect(switched == .claude, "usage delta alone switches (it is already refresh-interval slow)")
+
+    let idle = engine.evaluate(
+        signals: SmartProviderSignals(foregroundProvider: nil, usageDeltaProvider: nil),
+        now: start.addingTimeInterval(60)
+    )
+    try expect(idle == nil, "no candidate keeps the last selection")
+    try expect(engine.activeProvider == .claude, "idle does not fall back anywhere")
+}
+
+func testSmartSwitchManualPinBlocksAutoSwitchTemporarily() throws {
+    let start = Date(timeIntervalSince1970: 1_000)
+    var engine = SmartProviderSwitchEngine(activeProvider: .claude)
 
     engine.recordManualSelection(.codex, now: start)
 
     let blocked = engine.evaluate(
-        signals: SmartProviderSignals(
-            foregroundProvider: .claude,
-            recentActivityProvider: .claude,
-            runningProviders: [.claude]
-        ),
-        now: start.addingTimeInterval(120)
+        signals: SmartProviderSignals(foregroundProvider: .claude, usageDeltaProvider: nil),
+        now: start.addingTimeInterval(599)
     )
-    try expect(blocked == nil, "manual override blocks auto-switch")
+    try expect(blocked == nil, "manual pin blocks auto-switch for 10 minutes")
 
-    let afterOverride = engine.evaluate(
-        signals: SmartProviderSignals(
-            foregroundProvider: .claude,
-            recentActivityProvider: .claude,
-            runningProviders: [.claude]
-        ),
-        now: start.addingTimeInterval(621)
+    _ = engine.evaluate(
+        signals: SmartProviderSignals(foregroundProvider: .claude, usageDeltaProvider: nil),
+        now: start.addingTimeInterval(601)
     )
-    try expect(afterOverride == .claude, "auto-switch resumes after manual override expires")
+    let afterPin = engine.evaluate(
+        signals: SmartProviderSignals(foregroundProvider: .claude, usageDeltaProvider: nil),
+        now: start.addingTimeInterval(612)
+    )
+    try expect(afterPin == .claude, "auto-switch resumes after the pin expires")
 }
 
 func testSmartProviderTextMatcherDoesNotTreatClaudexBarAsClaude() throws {
@@ -564,10 +560,13 @@ let tests: [(String, () throws -> Void)] = [
     ("Secret scanner redaction", testSecretScannerRedactsTokenShapedStringsFromLogMessages),
     ("Provider selection model", testProviderSelectionCyclesOnlyEnabledProviders),
     ("Provider selection paused mode", testProviderSelectionCanBeEmptyForPausedMode),
-    ("Smart switch stable candidate", testSmartSwitchWaitsForStableCandidateBeforeSwitching),
-    ("Smart switch tie and weak signal", testSmartSwitchDoesNotSwitchOnTieOrWeakProcessOnlySignal),
-    ("Smart switch foreground beats recent activity", testSmartSwitchForegroundBeatsConflictingRecentActivity),
-    ("Smart switch manual override", testSmartSwitchManualOverrideSuppressesAutoSwitchTemporarily),
+    ("usage delta tracker single provider", testUsageDeltaTrackerFindsSingleActiveProvider),
+    ("usage delta tracker ties and magnitude", testUsageDeltaTrackerLargerDeltaWinsAndTiesDoNothing),
+    ("usage delta tracker window reset", testUsageDeltaTrackerIgnoresWindowResets),
+    ("smart switch foreground debounce", testSmartSwitchForegroundNeedsStabilityThenSwitches),
+    ("smart switch foreground beats delta", testSmartSwitchForegroundBeatsUsageDelta),
+    ("smart switch delta without foreground", testSmartSwitchUsageDeltaSwitchesWithoutForeground),
+    ("smart switch manual pin", testSmartSwitchManualPinBlocksAutoSwitchTemporarily),
     ("Smart provider text matcher", testSmartProviderTextMatcherDoesNotTreatClaudexBarAsClaude),
     ("threshold notification dedupe", testThresholdCreatesOneUsageNotificationPerCooldown),
     ("notification cooldown starts on delivery", testNotificationCooldownStartsOnlyWhenNotificationIsDelivered),

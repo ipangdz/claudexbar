@@ -27,7 +27,7 @@ final class StatusBarController: NSObject {
     private var countdownTimer: Timer?
     private var smartSwitchTimer: Timer?
     private var smartSwitchEngine: SmartProviderSwitchEngine?
-    private var smartSwitchDetectionInProgress = false
+    private var usageDeltaTracker = UsageDeltaTracker()
     private var refreshesInFlight: Set<ProviderID> = []
     private var presentedMenu: NSMenu?
     private var notificationStore = NotificationCycleStore()
@@ -102,7 +102,7 @@ final class StatusBarController: NSObject {
         if settings.smartSwitchEnabled {
             smartSwitchTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
                 guard let self else { return }
-                Task { @MainActor in self.beginSmartSwitchEvaluation() }
+                Task { @MainActor in self.evaluateSmartSwitch() }
             }
         }
     }
@@ -127,34 +127,10 @@ final class StatusBarController: NSObject {
         refreshActiveProvider()
     }
 
-    private func beginSmartSwitchEvaluation() {
+    private func evaluateSmartSwitch() {
         guard settings.smartSwitchEnabled else { return }
-        guard providerSelection.enabledProviders.count > 1 else { return }
-        guard !smartSwitchDetectionInProgress else { return }
-        smartSwitchDetectionInProgress = true
-
-        let foregroundProvider = smartSwitchDetector.foregroundProvider()
-        let detector = smartSwitchDetector
-        DispatchQueue.global(qos: .utility).async { [weak self, foregroundProvider, detector] in
-            let recentActivityProvider = detector.recentActivityProvider()
-            DispatchQueue.main.async {
-                self?.finishSmartSwitchEvaluation(
-                    foregroundProvider: foregroundProvider,
-                    recentActivityProvider: recentActivityProvider
-                )
-            }
-        }
-    }
-
-    private func finishSmartSwitchEvaluation(
-        foregroundProvider: ProviderID?,
-        recentActivityProvider: ProviderID?
-    ) {
-        smartSwitchDetectionInProgress = false
-
-        guard settings.smartSwitchEnabled else { return }
-        let selection = providerSelection
-        guard selection.enabledProviders.count > 1 else { return }
+        let enabled = Set(providerSelection.enabledProviders)
+        guard enabled.count > 1 else { return }
 
         if smartSwitchEngine == nil {
             smartSwitchEngine = SmartProviderSwitchEngine(activeProvider: activeProvider)
@@ -163,11 +139,11 @@ final class StatusBarController: NSObject {
             smartSwitchEngine?.recordExternalSelection(activeProvider)
         }
 
-        let enabled = Set(selection.enabledProviders)
         let signals = SmartProviderSignals(
-            foregroundProvider: foregroundProvider.flatMap { enabled.contains($0) ? $0 : nil },
-            recentActivityProvider: recentActivityProvider.flatMap { enabled.contains($0) ? $0 : nil },
-            runningProviders: []
+            foregroundProvider: smartSwitchDetector.foregroundProvider()
+                .flatMap { enabled.contains($0) ? $0 : nil },
+            usageDeltaProvider: usageDeltaTracker.dominantProvider()
+                .flatMap { enabled.contains($0) ? $0 : nil }
         )
 
         guard let provider = smartSwitchEngine?.evaluate(signals: signals, now: Date()) else { return }
@@ -217,6 +193,7 @@ final class StatusBarController: NSObject {
                 case .success(let snapshot):
                     snapshots[provider] = snapshot
                     errors[provider] = nil
+                    usageDeltaTracker.record(provider: provider, snapshot: snapshot)
                     logger.log(provider: provider, message: "usage ok")
                 case .failure(let error):
                     errors[provider] = error
@@ -503,7 +480,7 @@ final class StatusBarController: NSObject {
         settings.smartSwitchEnabled.toggle()
         if settings.smartSwitchEnabled {
             smartSwitchEngine = SmartProviderSwitchEngine(activeProvider: activeProvider)
-            beginSmartSwitchEvaluation()
+            evaluateSmartSwitch()
         }
         scheduleTimers()
     }
