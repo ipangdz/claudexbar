@@ -11,6 +11,12 @@ All notable changes to ClaudexBar are documented here. This project follows
   account badges, and per-account smart-switch detection.
 - Kept provider-level enable/disable, paused/off, smart switching, and re-auth
   for the two supported providers: Codex and Claude Code.
+- Redesigned smart auto switch: the pill now follows the provider that is
+  actually consuming usage (works for CLI, desktop, web, and remote sessions)
+  or the one clearly in the foreground; with no signal it stays on your last
+  choice instead of falling back to Codex.
+- Removed the filesystem-activity heuristic and its 5-second `~/.codex` /
+  `~/.claude` scans.
 
 ## [0.1.0] — 2026-06-03
 
