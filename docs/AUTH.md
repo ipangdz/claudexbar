@@ -2,7 +2,7 @@
 
 Last verified: 2026-06-03 (Claude Code v2.1.160, Codex CLI).
 
-This document describes how ClaudexBar actually authenticates today. It supersedes the auth sections of `BRIEF.md`, `docs/IMPLEMENTATION_PLAN.md`, and `docs/PROTOTYPE_NOTES.md`, which describe an earlier design that did not work on current Claude Code.
+This document describes how ClaudexBar actually authenticates today.
 
 ## Codex
 
