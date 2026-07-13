@@ -56,29 +56,55 @@ func testFullWindowUsesWindowLabelButPartialShowsExactPercent() throws {
     try expect(partialDisplay.label == "45m", "99% uses a reset countdown")
 }
 
+func testMissingWindowFormatsAsOnlyEmDash() throws {
+    let display = UsageFormatter.metricDisplay(for: nil)
+    try expect(display.label.isEmpty, "missing window has no label")
+    try expect(display.value == "—", "missing window uses only em dash")
+    try expect(UsageFormatter.percentText(for: nil) == "—", "missing menu percentage uses only em dash")
+}
+
 func testCodexUsageResponseParsing() throws {
     let data = try fixtureData("codex_usage")
     let now = Date(timeIntervalSince1970: 1_700_000_000)
     let snapshot = try CodexProvider.parseUsageResponse(data, fetchedAt: now)
+    let primary = try expectNonNil(snapshot.primary, "Codex primary window")
+    let secondary = try expectNonNil(snapshot.secondary, "Codex secondary window")
 
-    try expect(snapshot.primary.windowLabel == "5h", "Codex primary label")
-    try expect(snapshot.primary.remainingPercent == 93, "Codex primary remaining")
-    try expect(snapshot.primary.resetAt == now.addingTimeInterval(2_100), "Codex primary reset")
-    try expect(snapshot.secondary.windowLabel == "1w", "Codex secondary label")
-    try expect(snapshot.secondary.remainingPercent == 70, "Codex secondary remaining")
-    try expect(snapshot.secondary.resetAt == now.addingTimeInterval(395_000), "Codex secondary reset")
+    try expect(primary.windowLabel == "5h", "Codex primary label")
+    try expect(primary.remainingPercent == 93, "Codex primary remaining")
+    try expect(primary.resetAt == now.addingTimeInterval(2_100), "Codex primary reset")
+    try expect(secondary.windowLabel == "1w", "Codex secondary label")
+    try expect(secondary.remainingPercent == 70, "Codex secondary remaining")
+    try expect(secondary.resetAt == now.addingTimeInterval(395_000), "Codex secondary reset")
+}
+
+func testCodexUsageResponseParsingSupportsWeeklyOnlyWindow() throws {
+    let data = try fixtureData("codex_usage_weekly_only")
+    let now = Date(timeIntervalSince1970: 1_700_000_000)
+    let snapshot = try CodexProvider.parseUsageResponse(data, fetchedAt: now)
+
+    try expect(snapshot.primary == nil, "Codex missing 5h window stays unavailable")
+    let weekly = try expectNonNil(snapshot.secondary, "Codex weekly window remains available")
+    try expect(weekly.windowLabel == "1w", "Codex weekly label")
+    try expect(weekly.remainingPercent == 70, "Codex weekly remaining")
+    try expect(weekly.resetAt == now.addingTimeInterval(566_340), "Codex weekly reset")
+
+    let restored = try CodexProvider.parseUsageResponse(try fixtureData("codex_usage"), fetchedAt: now)
+    try expect(restored.primary != nil, "Codex 5h window restores when it returns")
 }
 
 func testClaudeUsageResponseParsingUsesSevenDayFallback() throws {
     let data = try fixtureData("claude_usage")
     let snapshot = try ClaudeProvider.parseUsageResponse(data, fetchedAt: Date(timeIntervalSince1970: 1_700_000_000))
+    let primary = try expectNonNil(snapshot.primary, "Claude primary window")
+    let secondary = try expectNonNil(snapshot.secondary, "Claude secondary window")
 
-    try expect(snapshot.primary.windowLabel == "5h", "Claude primary label")
-    try expect(snapshot.primary.remainingPercent == 88, "Claude primary remaining")
-    try expect(snapshot.primary.resetAt == ISO8601DateFormatter.parseClaudexDate("2026-06-03T19:00:00Z"), "Claude primary reset")
-    try expect(snapshot.secondary.windowLabel == "7d", "Claude secondary label")
-    try expect(snapshot.secondary.remainingPercent == 64, "Claude secondary remaining")
-    try expect(snapshot.secondary.resetAt == ISO8601DateFormatter.parseClaudexDate("2026-06-08T02:28:55Z"), "Claude secondary reset")
+    try expect(primary.windowLabel == "5h", "Claude primary label")
+    try expect(primary.remainingPercent == 88, "Claude primary remaining")
+    try expect(primary.resetAt == ISO8601DateFormatter.parseClaudexDate("2026-06-03T19:00:00Z"), "Claude primary reset")
+    try expect(secondary.windowLabel == "7d", "Claude secondary label")
+    try expect(secondary.remainingPercent == 64, "Claude secondary remaining")
+    try expect(secondary.resetAt == ISO8601DateFormatter.parseClaudexDate("2026-06-08T02:28:55Z"), "Claude secondary reset")
 }
 
 func testClaudeCredentialReaderAcceptsOAuthEnvironmentToken() throws {
@@ -247,6 +273,37 @@ func testUsageDeltaTrackerIgnoresWindowResets() throws {
     try expect(tracker.dominantProvider() == nil, "remaining going up (window reset) is not usage")
 }
 
+func testUsageDeltaTrackerIgnoresMissingPrimaryAndRebaselinesOnRestore() throws {
+    let resetAt = Date(timeIntervalSince1970: 20_000)
+    var tracker = UsageDeltaTracker()
+    tracker.record(
+        provider: .codex,
+        snapshot: UsageSnapshot(
+            primary: UsageWindow(windowLabel: "5h", remainingPercent: 80, resetAt: resetAt),
+            secondary: nil,
+            fetchedAt: Date()
+        )
+    )
+    tracker.record(
+        provider: .codex,
+        snapshot: UsageSnapshot(
+            primary: nil,
+            secondary: UsageWindow(windowLabel: "1w", remainingPercent: 70, resetAt: resetAt),
+            fetchedAt: Date()
+        )
+    )
+    tracker.record(
+        provider: .codex,
+        snapshot: UsageSnapshot(
+            primary: UsageWindow(windowLabel: "5h", remainingPercent: 60, resetAt: resetAt),
+            secondary: nil,
+            fetchedAt: Date()
+        )
+    )
+
+    try expect(tracker.dominantProvider() == nil, "restored primary window starts a new delta baseline")
+}
+
 func testSmartSwitchForegroundNeedsStabilityThenSwitches() throws {
     let start = Date(timeIntervalSince1970: 1_000)
     var engine = SmartProviderSwitchEngine(activeProvider: .codex)
@@ -353,6 +410,29 @@ func testThresholdCreatesOneUsageNotificationPerCooldown() throws {
     try expect(soonAfter.isEmpty, "usage notifications are rate limited")
     try expect(afterCooldown.count == 1, "second window can notify after cooldown")
     try expect(afterCooldown.first?.windowKind == .secondary, "secondary window was delayed, not discarded")
+}
+
+func testMissingPrimaryWindowDoesNotNotify() throws {
+    let weekly = UsageWindow(
+        windowLabel: "1w",
+        remainingPercent: 70,
+        resetAt: Date(timeIntervalSince1970: 20_000)
+    )
+    let snapshot = UsageSnapshot(
+        primary: nil,
+        secondary: weekly,
+        fetchedAt: Date(timeIntervalSince1970: 1_000)
+    )
+    let evaluator = NotificationEvaluator(threshold: .twentyPercent)
+    var store = NotificationCycleStore()
+
+    let decisions = evaluator.decisions(
+        activeProvider: .codex,
+        snapshots: [.codex: snapshot],
+        store: &store,
+        now: Date(timeIntervalSince1970: 1_000)
+    )
+    try expect(decisions.isEmpty, "missing primary window does not notify")
 }
 
 func testNotificationCooldownStartsOnlyWhenNotificationIsDelivered() throws {
@@ -547,7 +627,9 @@ let tests: [(String, () throws -> Void)] = [
     ("reset labels use absolute reset dates", testResetLabelsUseAbsoluteResetDates),
     ("countdown changes without new fetch", testCountdownChangesWhenNowChangesWithoutNewFetch),
     ("full window label vs exact partial percent", testFullWindowUsesWindowLabelButPartialShowsExactPercent),
+    ("missing window em dash formatting", testMissingWindowFormatsAsOnlyEmDash),
     ("Codex usage response parsing", testCodexUsageResponseParsing),
+    ("Codex weekly-only usage parsing", testCodexUsageResponseParsingSupportsWeeklyOnlyWindow),
     ("Claude usage response parsing", testClaudeUsageResponseParsingUsesSevenDayFallback),
     ("Claude env OAuth token", testClaudeCredentialReaderAcceptsOAuthEnvironmentToken),
     ("PKCE S256 challenge", testPKCEChallengeMatchesRFC7636Vector),
@@ -563,12 +645,14 @@ let tests: [(String, () throws -> Void)] = [
     ("usage delta tracker single provider", testUsageDeltaTrackerFindsSingleActiveProvider),
     ("usage delta tracker ties and magnitude", testUsageDeltaTrackerLargerDeltaWinsAndTiesDoNothing),
     ("usage delta tracker window reset", testUsageDeltaTrackerIgnoresWindowResets),
+    ("usage delta tracker missing primary", testUsageDeltaTrackerIgnoresMissingPrimaryAndRebaselinesOnRestore),
     ("smart switch foreground debounce", testSmartSwitchForegroundNeedsStabilityThenSwitches),
     ("smart switch foreground beats delta", testSmartSwitchForegroundBeatsUsageDelta),
     ("smart switch delta without foreground", testSmartSwitchUsageDeltaSwitchesWithoutForeground),
     ("smart switch manual pin", testSmartSwitchManualPinBlocksAutoSwitchTemporarily),
     ("Smart provider text matcher", testSmartProviderTextMatcherDoesNotTreatClaudexBarAsClaude),
     ("threshold notification dedupe", testThresholdCreatesOneUsageNotificationPerCooldown),
+    ("missing primary window notification", testMissingPrimaryWindowDoesNotNotify),
     ("notification cooldown starts on delivery", testNotificationCooldownStartsOnlyWhenNotificationIsDelivered),
     ("default usage notification cooldown", testDefaultUsageNotificationCooldownIsThreeHours),
     ("cross-provider hint", testCrossProviderHintRequiresTwentyFivePointAdvantage),

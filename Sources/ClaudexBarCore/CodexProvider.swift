@@ -56,23 +56,49 @@ public struct CodexProvider: UsageProvider {
 
     public static func parseUsageResponse(_ data: Data, fetchedAt: Date) throws -> UsageSnapshot {
         let response = try JSONDecoder().decode(CodexUsageResponse.self, from: data)
-        guard let primary = response.rateLimit.primaryWindow,
-              let secondary = response.rateLimit.secondaryWindow
-        else {
+        let primary = response.rateLimit.primaryWindow
+        let secondary = response.rateLimit.secondaryWindow
+        let windows = [primary, secondary].compactMap { $0 }
+
+        var fiveHour: CodexUsageResponse.Window?
+        var weekly: CodexUsageResponse.Window?
+        for window in windows {
+            switch window.limitWindowSeconds {
+            case 18_000:
+                fiveHour = window
+            case 604_800:
+                weekly = window
+            default:
+                break
+            }
+        }
+
+        // Older valid responses omitted duration metadata and used stable
+        // primary/secondary positions. Keep that shape backwards compatible.
+        if windows.allSatisfy({ $0.limitWindowSeconds == nil }),
+           let primary,
+           let secondary {
+            fiveHour = primary
+            weekly = secondary
+        }
+
+        guard fiveHour != nil || weekly != nil else {
             throw UsageError.decoding
         }
 
+        func usageWindow(_ window: CodexUsageResponse.Window?, label: String) -> UsageWindow? {
+            window.map {
+                UsageWindow(
+                    windowLabel: label,
+                    remainingPercent: clampPercent(100 - $0.usedPercent),
+                    resetAt: fetchedAt.addingTimeInterval(TimeInterval($0.resetAfterSeconds))
+                )
+            }
+        }
+
         return UsageSnapshot(
-            primary: UsageWindow(
-                windowLabel: "5h",
-                remainingPercent: clampPercent(100 - primary.usedPercent),
-                resetAt: fetchedAt.addingTimeInterval(TimeInterval(primary.resetAfterSeconds))
-            ),
-            secondary: UsageWindow(
-                windowLabel: "1w",
-                remainingPercent: clampPercent(100 - secondary.usedPercent),
-                resetAt: fetchedAt.addingTimeInterval(TimeInterval(secondary.resetAfterSeconds))
-            ),
+            primary: usageWindow(fiveHour, label: "5h"),
+            secondary: usageWindow(weekly, label: "1w"),
             fetchedAt: fetchedAt
         )
     }
@@ -98,16 +124,19 @@ private struct CodexUsageResponse: Decodable {
     struct Window: Decodable {
         let usedPercent: Int
         let resetAfterSeconds: Int
+        let limitWindowSeconds: Int?
 
         enum CodingKeys: String, CodingKey {
             case usedPercent = "used_percent"
             case resetAfterSeconds = "reset_after_seconds"
+            case limitWindowSeconds = "limit_window_seconds"
         }
 
         init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             usedPercent = clampPercent(try container.decodeLossyDouble(forKey: .usedPercent))
             resetAfterSeconds = try container.decode(Int.self, forKey: .resetAfterSeconds)
+            limitWindowSeconds = try container.decodeIfPresent(Int.self, forKey: .limitWindowSeconds)
         }
     }
 }

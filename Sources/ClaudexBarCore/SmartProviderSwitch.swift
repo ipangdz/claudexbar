@@ -53,7 +53,11 @@ public struct UsageDeltaTracker: Sendable {
     public init() {}
 
     public mutating func record(provider: ProviderID, snapshot: UsageSnapshot) {
-        let remaining = snapshot.primary.remainingPercent
+        guard let remaining = snapshot.primary?.remainingPercent else {
+            lastRemaining.removeValue(forKey: provider)
+            deltas.removeValue(forKey: provider)
+            return
+        }
         if let previous = lastRemaining[provider] {
             deltas[provider] = max(0, previous - remaining)
         }

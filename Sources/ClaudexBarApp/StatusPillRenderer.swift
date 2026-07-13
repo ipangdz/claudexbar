@@ -6,14 +6,14 @@ enum StatusPillRenderer {
     private static let itemHeight: CGFloat = 26
 
     static func image(provider: ProviderID, snapshot: UsageSnapshot, now: Date = Date()) -> NSImage {
-        let primary = UsageFormatter.display(for: snapshot.primary, now: now)
-        let secondary = UsageFormatter.display(for: snapshot.secondary, now: now)
+        let primary = UsageFormatter.metricDisplay(for: snapshot.primary, now: now)
+        let secondary = UsageFormatter.metricDisplay(for: snapshot.secondary, now: now)
         return image(
             provider: provider,
             primaryLabel: primary.label,
-            primaryRemaining: primary.remainingPercent,
+            primaryValue: primary.value,
             secondaryLabel: secondary.label,
-            secondaryRemaining: secondary.remainingPercent
+            secondaryValue: secondary.value
         )
     }
 
@@ -57,9 +57,9 @@ enum StatusPillRenderer {
     private static func image(
         provider: ProviderID,
         primaryLabel: String,
-        primaryRemaining: Int,
+        primaryValue: String,
         secondaryLabel: String,
-        secondaryRemaining: Int
+        secondaryValue: String
     ) -> NSImage {
         let colors = themeColors()
         let image = baseImage(backgroundColor: colors.background)
@@ -67,14 +67,14 @@ enum StatusPillRenderer {
         drawIcon(provider: provider, in: NSRect(x: 8, y: 5, width: 16, height: 16), color: colors.foreground)
         drawMetric(
             label: primaryLabel,
-            value: "\(primaryRemaining)%",
+            value: primaryValue,
             x: 42,
             foregroundColor: colors.foreground,
             secondaryForegroundColor: colors.secondaryForeground
         )
         drawMetric(
             label: secondaryLabel,
-            value: "\(secondaryRemaining)%",
+            value: secondaryValue,
             x: 84,
             foregroundColor: colors.foreground,
             secondaryForegroundColor: colors.secondaryForeground

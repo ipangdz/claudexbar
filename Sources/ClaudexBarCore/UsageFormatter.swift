@@ -29,4 +29,16 @@ public enum UsageFormatter {
         let label = resetLabel(resetAt: window.resetAt, now: now, fallback: window.windowLabel)
         return WindowDisplay(label: label, remainingPercent: window.remainingPercent)
     }
+
+    public static func metricDisplay(for window: UsageWindow?, now: Date = Date()) -> UsageMetricDisplay {
+        guard let window else {
+            return UsageMetricDisplay(label: "", value: "—")
+        }
+        let display = display(for: window, now: now)
+        return UsageMetricDisplay(label: display.label, value: "\(display.remainingPercent)%")
+    }
+
+    public static func percentText(for window: UsageWindow?) -> String {
+        window.map { "\($0.remainingPercent)%" } ?? "—"
+    }
 }

@@ -134,10 +134,13 @@ public struct NotificationEvaluator: Sendable {
             return []
         }
 
-        let candidates = [
+        let candidates: [(UsageWindowKind, UsageWindow)] = [
             (.primary, activeSnapshot.primary),
             (.secondary, activeSnapshot.secondary)
         ]
+            .compactMap { kind, window in
+                window.map { (kind, $0) }
+            }
             .filter { kind, window in
                 window.remainingPercent <= remainingLimit
                     && !store.hasDelivered(provider: activeProvider, kind: kind, resetAt: window.resetAt)
@@ -213,10 +216,12 @@ public struct NotificationEvaluator: Sendable {
         source: NotificationSourceSnapshot,
         store: inout NotificationCycleStore
     ) -> [RecoveryNotificationDecision] {
-        return [
+        let windows: [(UsageWindowKind, UsageWindow?)] = [
             (.primary, source.snapshot.primary),
             (.secondary, source.snapshot.secondary)
-        ].compactMap { kind, window in
+        ]
+        return windows.compactMap { kind, optionalWindow in
+            guard let window = optionalWindow else { return nil }
             if window.remainingPercent <= Self.depletedRecoveryLimit {
                 store.markDepleted(provider: source.provider, kind: kind)
                 return nil
@@ -237,7 +242,7 @@ public struct NotificationEvaluator: Sendable {
 }
 
 public extension UsageSnapshot {
-    func window(_ kind: UsageWindowKind) -> UsageWindow {
+    func window(_ kind: UsageWindowKind) -> UsageWindow? {
         switch kind {
         case .primary: return primary
         case .secondary: return secondary

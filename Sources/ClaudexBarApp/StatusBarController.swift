@@ -303,7 +303,7 @@ final class StatusBarController: NSObject {
     private func providerStatusHint(_ provider: ProviderID) -> String {
         if let override = statusOverrides[provider] { return override }
         if let snapshot = snapshots[provider], errors[provider] == nil {
-            return "\(snapshot.primary.remainingPercent)% · \(snapshot.secondary.remainingPercent)%"
+            return "\(UsageFormatter.percentText(for: snapshot.primary)) · \(UsageFormatter.percentText(for: snapshot.secondary))"
         }
         if let error = errors[provider] { return error.statusLabel }
         return "wait"

@@ -41,11 +41,11 @@ public protocol UsageProvider: Sendable {
 }
 
 public struct UsageSnapshot: Equatable, Sendable {
-    public let primary: UsageWindow
-    public let secondary: UsageWindow
+    public let primary: UsageWindow?
+    public let secondary: UsageWindow?
     public let fetchedAt: Date
 
-    public init(primary: UsageWindow, secondary: UsageWindow, fetchedAt: Date) {
+    public init(primary: UsageWindow?, secondary: UsageWindow?, fetchedAt: Date) {
         self.primary = primary
         self.secondary = secondary
         self.fetchedAt = fetchedAt
@@ -127,6 +127,11 @@ public enum UsageWindowKind: String, Hashable, Sendable {
 public struct WindowDisplay: Equatable, Sendable {
     public let label: String
     public let remainingPercent: Int
+}
+
+public struct UsageMetricDisplay: Equatable, Sendable {
+    public let label: String
+    public let value: String
 }
 
 public extension ISO8601DateFormatter {
