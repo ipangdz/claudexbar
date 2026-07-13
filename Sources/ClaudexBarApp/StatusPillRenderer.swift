@@ -6,8 +6,16 @@ enum StatusPillRenderer {
     private static let itemHeight: CGFloat = 26
 
     static func image(provider: ProviderID, snapshot: UsageSnapshot, now: Date = Date()) -> NSImage {
-        let primary = UsageFormatter.metricDisplay(for: snapshot.primary, now: now)
-        let secondary = UsageFormatter.metricDisplay(for: snapshot.secondary, now: now)
+        let primary = UsageFormatter.metricDisplay(
+            for: snapshot.primary,
+            unavailableLabel: "5h",
+            now: now
+        )
+        let secondary = UsageFormatter.metricDisplay(
+            for: snapshot.secondary,
+            unavailableLabel: provider == .codex ? "1w" : "7d",
+            now: now
+        )
         return image(
             provider: provider,
             primaryLabel: primary.label,

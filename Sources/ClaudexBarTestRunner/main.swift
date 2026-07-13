@@ -56,11 +56,11 @@ func testFullWindowUsesWindowLabelButPartialShowsExactPercent() throws {
     try expect(partialDisplay.label == "45m", "99% uses a reset countdown")
 }
 
-func testMissingWindowFormatsAsOnlyEmDash() throws {
-    let display = UsageFormatter.metricDisplay(for: nil)
-    try expect(display.label.isEmpty, "missing window has no label")
-    try expect(display.value == "—", "missing window uses only em dash")
-    try expect(UsageFormatter.percentText(for: nil) == "—", "missing menu percentage uses only em dash")
+func testMissingWindowFormatsAsUnlimitedFiveHourWindow() throws {
+    let display = UsageFormatter.metricDisplay(for: nil, unavailableLabel: "5h")
+    try expect(display.label == "5h", "missing 5h window keeps its label")
+    try expect(display.value == "∞", "missing 5h window shows unlimited")
+    try expect(UsageFormatter.percentText(for: nil) == "∞", "missing menu percentage shows unlimited")
 }
 
 func testCodexUsageResponseParsing() throws {
@@ -627,7 +627,7 @@ let tests: [(String, () throws -> Void)] = [
     ("reset labels use absolute reset dates", testResetLabelsUseAbsoluteResetDates),
     ("countdown changes without new fetch", testCountdownChangesWhenNowChangesWithoutNewFetch),
     ("full window label vs exact partial percent", testFullWindowUsesWindowLabelButPartialShowsExactPercent),
-    ("missing window em dash formatting", testMissingWindowFormatsAsOnlyEmDash),
+    ("missing window unlimited formatting", testMissingWindowFormatsAsUnlimitedFiveHourWindow),
     ("Codex usage response parsing", testCodexUsageResponseParsing),
     ("Codex weekly-only usage parsing", testCodexUsageResponseParsingSupportsWeeklyOnlyWindow),
     ("Claude usage response parsing", testClaudeUsageResponseParsingUsesSevenDayFallback),
