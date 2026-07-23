@@ -314,12 +314,21 @@ final class StatusBarController: NSObject {
     /// Inline status shown after the provider name: remaining percentages when
     /// usage is available, otherwise a status word (`login`/`auth`/`net`/`err`).
     private func providerStatusHint(_ provider: ProviderID) -> String {
-        if let override = statusOverrides[provider] { return override }
-        if let snapshot = snapshots[provider], errors[provider] == nil {
-            return "\(UsageFormatter.percentText(for: snapshot.primary)) · \(UsageFormatter.percentText(for: snapshot.secondary))"
+        let status: String
+        if let override = statusOverrides[provider] {
+            status = override
+        } else if let snapshot = snapshots[provider], errors[provider] == nil {
+            status = "\(UsageFormatter.percentText(for: snapshot.primary)) · \(UsageFormatter.percentText(for: snapshot.secondary))"
+        } else if let error = errors[provider] {
+            status = error.statusLabel
+        } else {
+            status = "wait"
         }
-        if let error = errors[provider] { return error.statusLabel }
-        return "wait"
+
+        if let version = cliUpdateSnapshot?.installed[provider] {
+            return "\(status) · v\(version)"
+        }
+        return status
     }
 
     private func refreshIntervalMenu() -> NSMenuItem {
@@ -380,12 +389,6 @@ final class StatusBarController: NSObject {
         )
         submenu.addItem(automatic)
 
-        let claudeInfo = NSMenuItem(title: cliVersionLabel(.claude), action: nil, keyEquivalent: "")
-        claudeInfo.isEnabled = false
-        claudeInfo.isAlternate = true
-        claudeInfo.keyEquivalentModifierMask = .option
-        submenu.addItem(claudeInfo)
-
         let updateTitle = cliUpdateInProgress ? "Updating Claude & Codex…" : "Update Claude & Codex Now"
         let update = NSMenuItem(title: updateTitle, action: #selector(updateCLIsManually), keyEquivalent: "")
         update.target = self
@@ -393,12 +396,6 @@ final class StatusBarController: NSObject {
             && !cliUpdateCheckInProgress
             && cliUpdateSnapshot?.installed.isEmpty == false
         submenu.addItem(update)
-
-        let codexInfo = NSMenuItem(title: cliVersionLabel(.codex), action: nil, keyEquivalent: "")
-        codexInfo.isEnabled = false
-        codexInfo.isAlternate = true
-        codexInfo.keyEquivalentModifierMask = .option
-        submenu.addItem(codexInfo)
 
         parent.submenu = submenu
         return parent
