@@ -297,6 +297,7 @@ final class StatusBarController: NSObject {
         let row = NSMenuItem()
         row.view = ProviderToggleView(
             label: provider.displayName,
+            version: providerVersionBadge(provider),
             hint: providerStatusHint(provider),
             isEnabled: { [weak self] in self?.providerSelection.enabledProviders.contains(provider) ?? false },
             onToggle: { [weak self] in self?.toggleProviderEnabled(provider) }
@@ -314,21 +315,30 @@ final class StatusBarController: NSObject {
     /// Inline status shown after the provider name: remaining percentages when
     /// usage is available, otherwise a status word (`login`/`auth`/`net`/`err`).
     private func providerStatusHint(_ provider: ProviderID) -> String {
-        let status: String
         if let override = statusOverrides[provider] {
-            status = override
-        } else if let snapshot = snapshots[provider], errors[provider] == nil {
-            status = "\(UsageFormatter.percentText(for: snapshot.primary)) · \(UsageFormatter.percentText(for: snapshot.secondary))"
-        } else if let error = errors[provider] {
-            status = error.statusLabel
-        } else {
-            status = "wait"
+            return override
         }
+        if let snapshot = snapshots[provider], errors[provider] == nil {
+            return "\(UsageFormatter.percentText(for: snapshot.primary)) · \(UsageFormatter.percentText(for: snapshot.secondary))"
+        }
+        if let error = errors[provider] { return error.statusLabel }
+        return "wait"
+    }
 
-        if let version = cliUpdateSnapshot?.installed[provider] {
-            return "\(status) · v\(version)"
+    private func providerVersionBadge(_ provider: ProviderID) -> ProviderVersionBadge? {
+        guard let updateSnapshot = cliUpdateSnapshot,
+              let installed = updateSnapshot.installed[provider] else {
+            return nil
         }
-        return status
+        let state: ProviderVersionState
+        if updateSnapshot.latest[provider] == nil {
+            state = .unknown
+        } else if updateSnapshot.hasUpdate(for: provider) {
+            state = .outdated
+        } else {
+            state = .current
+        }
+        return ProviderVersionBadge(text: "v\(installed)", state: state)
     }
 
     private func refreshIntervalMenu() -> NSMenuItem {
