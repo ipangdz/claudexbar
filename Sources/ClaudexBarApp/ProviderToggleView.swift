@@ -101,11 +101,19 @@ final class ProviderToggleView: NSView {
 
         let primary: NSColor = highlighted ? .white : .labelColor
         let secondary: NSColor = highlighted ? NSColor.white.withAlphaComponent(0.85) : .secondaryLabelColor
+        let normalTextHeight = ("Ag" as NSString).size(withAttributes: [.font: font]).height
+        let normalTextBottom = (h - normalTextHeight) / 2
 
-        func draw(_ string: String, at x: CGFloat, font: NSFont, color: NSColor) {
+        func draw(
+            _ string: String,
+            at x: CGFloat,
+            font: NSFont,
+            color: NSColor,
+            bottom: CGFloat? = nil
+        ) {
             let attr = NSAttributedString(string: string, attributes: [.font: font, .foregroundColor: color])
             let size = attr.size()
-            attr.draw(at: NSPoint(x: x, y: (h - size.height) / 2))
+            attr.draw(at: NSPoint(x: x, y: bottom ?? (h - size.height) / 2))
         }
 
         if isEnabled() {
@@ -127,7 +135,13 @@ final class ProviderToggleView: NSView {
                 case .unknown: versionColor = .secondaryLabelColor
                 }
             }
-            draw(version.text, at: trailingX, font: versionFont, color: versionColor)
+            draw(
+                version.text,
+                at: trailingX,
+                font: versionFont,
+                color: versionColor,
+                bottom: normalTextBottom
+            )
             trailingX += textWidth(version.text, font: versionFont)
         }
 
