@@ -25,4 +25,8 @@ final class SanitizedLogger {
             }
         }
     }
+
+    func flush() {
+        queue.sync {}
+    }
 }

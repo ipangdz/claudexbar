@@ -199,6 +199,39 @@ func testUpdateCheckerVersionComparison() throws {
     try expect(!UpdateChecker.isVersion("0.1.0", newerThan: "0.2.0"), "older is not newer")
 }
 
+func testCLIVersionParsingAndAvailability() throws {
+    try expect(
+        CLIVersionParser.semanticVersion(in: "2.1.218 (Claude Code)") == "2.1.218",
+        "Claude installed version parses"
+    )
+    try expect(
+        CLIVersionParser.semanticVersion(in: "codex-cli 0.145.0") == "0.145.0",
+        "Codex installed version parses"
+    )
+    try expect(
+        CLIVersionParser.latestVersion(
+            provider: .claude,
+            from: Data(#"{"tag_name":"v2.1.219"}"#.utf8)
+        ) == "2.1.219",
+        "Claude GitHub release parses"
+    )
+    try expect(
+        CLIVersionParser.latestVersion(
+            provider: .codex,
+            from: Data(#"{"version":"0.146.0"}"#.utf8)
+        ) == "0.146.0",
+        "Codex npm release parses"
+    )
+
+    let snapshot = CLIUpdateSnapshot(
+        installed: [.claude: "2.1.218", .codex: "0.145.0"],
+        latest: [.claude: "2.1.219", .codex: "0.145.0"]
+    )
+    try expect(snapshot.hasUpdate(for: .claude), "Claude update detected")
+    try expect(!snapshot.hasUpdate(for: .codex), "equal Codex version is current")
+    try expect(snapshot.hasAnyUpdate, "aggregate update state detected")
+}
+
 func testSecretScannerRedactsTokenShapedStringsFromLogMessages() throws {
     let leaky = "reauth produced sk-ant-oat01-AbCdEf012345_token.value and a jwt eyJhbGciOiJIUzI1.AAAABBBBCCCCDDDD"
     let redacted = SecretScanner.redact(leaky)
@@ -639,6 +672,7 @@ let tests: [(String, () throws -> Void)] = [
     ("OAuth refresh rotation", testRefreshResponseParsingRotatesRefreshTokenAndFallsBack),
     ("Usage error transient classification", testUsageErrorTransientClassification),
     ("Update version comparison", testUpdateCheckerVersionComparison),
+    ("CLI version parsing and availability", testCLIVersionParsingAndAvailability),
     ("Secret scanner redaction", testSecretScannerRedactsTokenShapedStringsFromLogMessages),
     ("Provider selection model", testProviderSelectionCyclesOnlyEnabledProviders),
     ("Provider selection paused mode", testProviderSelectionCanBeEmptyForPausedMode),

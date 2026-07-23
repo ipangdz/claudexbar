@@ -66,4 +66,16 @@ final class AppSettings {
             defaults.set(newValue, forKey: "smartSwitchEnabled")
         }
     }
+
+    var automaticCLIUpdatesEnabled: Bool {
+        get {
+            if defaults.object(forKey: "automaticCLIUpdatesEnabled") == nil {
+                return true
+            }
+            return defaults.bool(forKey: "automaticCLIUpdatesEnabled")
+        }
+        set {
+            defaults.set(newValue, forKey: "automaticCLIUpdatesEnabled")
+        }
+    }
 }

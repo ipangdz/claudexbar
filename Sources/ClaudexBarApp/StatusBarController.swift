@@ -26,10 +26,14 @@ final class StatusBarController: NSObject {
     private var refreshTimer: Timer?
     private var countdownTimer: Timer?
     private var smartSwitchTimer: Timer?
+    private var cliUpdateCheckTimer: Timer?
     private var smartSwitchEngine: SmartProviderSwitchEngine?
     private var usageDeltaTracker = UsageDeltaTracker()
     private var refreshesInFlight: Set<ProviderID> = []
     private var presentedMenu: NSMenu?
+    private var cliUpdateSnapshot: CLIUpdateSnapshot?
+    private var cliUpdateCheckInProgress = false
+    private var cliUpdateInProgress = false
     private var notificationStore = NotificationCycleStore()
     private var lastAuthNotificationAt: [ProviderID: Date] = [:]
     private var providerSelection: ProviderSelection {
@@ -59,6 +63,8 @@ final class StatusBarController: NSObject {
         updateImage()
         refreshAll()
         scheduleTimers()
+        configureCLIUpdates()
+        checkCLIUpdatesQuietly()
         checkForUpdatesQuietly()
     }
 
@@ -90,6 +96,7 @@ final class StatusBarController: NSObject {
         refreshTimer?.invalidate()
         countdownTimer?.invalidate()
         smartSwitchTimer?.invalidate()
+        cliUpdateCheckTimer?.invalidate()
 
         refreshTimer = Timer.scheduledTimer(withTimeInterval: settings.refreshInterval, repeats: true) { [weak self] _ in
             guard let self else { return }
@@ -104,6 +111,10 @@ final class StatusBarController: NSObject {
                 guard let self else { return }
                 Task { @MainActor in self.evaluateSmartSwitch() }
             }
+        }
+        cliUpdateCheckTimer = Timer.scheduledTimer(withTimeInterval: 6 * 60 * 60, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in self.checkCLIUpdatesQuietly() }
         }
     }
 
@@ -258,6 +269,8 @@ final class StatusBarController: NSObject {
         menu.addItem(toggleItem(title: "Launch at Login", isOn: LaunchAgentManager.isEnabled(), action: #selector(toggleLaunchAtLogin)))
         menu.addItem(refreshIntervalMenu())
         menu.addItem(notificationMenu())
+        menu.addItem(.separator())
+        menu.addItem(cliUpdateMenu())
         menu.addItem(NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "", target: self))
         // Hold Option to reveal a notification self-test in its place.
         let testNotif = NSMenuItem(title: "Send Test Notification", action: #selector(sendTestNotification), keyEquivalent: "", target: self)
@@ -346,6 +359,65 @@ final class StatusBarController: NSObject {
         }
         parent.submenu = submenu
         return parent
+    }
+
+    private func cliUpdateMenu() -> NSMenuItem {
+        let title: String
+        if cliUpdateInProgress {
+            title = "CLI Updates · Updating…"
+        } else if cliUpdateSnapshot?.hasAnyUpdate == true {
+            title = "CLI Updates · Available"
+        } else {
+            title = "CLI Updates"
+        }
+        let parent = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        let submenu = NSMenu()
+
+        let automatic = toggleItem(
+            title: "Daily Auto-update",
+            isOn: settings.automaticCLIUpdatesEnabled,
+            action: #selector(toggleAutomaticCLIUpdates)
+        )
+        submenu.addItem(automatic)
+
+        let claudeInfo = NSMenuItem(title: cliVersionLabel(.claude), action: nil, keyEquivalent: "")
+        claudeInfo.isEnabled = false
+        claudeInfo.isAlternate = true
+        claudeInfo.keyEquivalentModifierMask = .option
+        submenu.addItem(claudeInfo)
+
+        let updateTitle = cliUpdateInProgress ? "Updating Claude & Codex…" : "Update Claude & Codex Now"
+        let update = NSMenuItem(title: updateTitle, action: #selector(updateCLIsManually), keyEquivalent: "")
+        update.target = self
+        update.isEnabled = !cliUpdateInProgress
+            && !cliUpdateCheckInProgress
+            && cliUpdateSnapshot?.installed.isEmpty == false
+        submenu.addItem(update)
+
+        let codexInfo = NSMenuItem(title: cliVersionLabel(.codex), action: nil, keyEquivalent: "")
+        codexInfo.isEnabled = false
+        codexInfo.isAlternate = true
+        codexInfo.keyEquivalentModifierMask = .option
+        submenu.addItem(codexInfo)
+
+        parent.submenu = submenu
+        return parent
+    }
+
+    private func cliVersionLabel(_ provider: ProviderID) -> String {
+        guard let snapshot = cliUpdateSnapshot else {
+            return "\(provider.displayName) · checking…"
+        }
+        guard let installed = snapshot.installed[provider] else {
+            return "\(provider.displayName) · not found"
+        }
+        guard let latest = snapshot.latest[provider] else {
+            return "\(provider.displayName) \(installed) · check unavailable"
+        }
+        if snapshot.hasUpdate(for: provider) {
+            return "\(provider.displayName) \(installed) → \(latest)"
+        }
+        return "\(provider.displayName) \(installed) · current"
     }
 
     private func toggleItem(title: String, isOn: Bool, action: Selector) -> NSMenuItem {
@@ -483,6 +555,58 @@ final class StatusBarController: NSObject {
             evaluateSmartSwitch()
         }
         scheduleTimers()
+    }
+
+    private func configureCLIUpdates() {
+        CLIUpdateScheduler.setEnabled(settings.automaticCLIUpdatesEnabled)
+    }
+
+    @objc private func toggleAutomaticCLIUpdates() {
+        settings.automaticCLIUpdatesEnabled.toggle()
+        CLIUpdateScheduler.setEnabled(settings.automaticCLIUpdatesEnabled)
+    }
+
+    private func checkCLIUpdatesQuietly() {
+        guard !cliUpdateCheckInProgress, !cliUpdateInProgress else { return }
+        cliUpdateCheckInProgress = true
+        Task { [weak self] in
+            let snapshot = await CLIUpdateManager.shared.snapshot()
+            guard let self else { return }
+            await MainActor.run {
+                self.cliUpdateSnapshot = snapshot
+                self.cliUpdateCheckInProgress = false
+            }
+        }
+    }
+
+    @objc private func updateCLIsManually() {
+        guard !cliUpdateInProgress, !cliUpdateCheckInProgress else { return }
+        cliUpdateInProgress = true
+        Task { [weak self] in
+            let results = await CLIUpdateManager.shared.updateAll()
+            let snapshot = await CLIUpdateManager.shared.snapshot()
+            guard let self else { return }
+            await MainActor.run {
+                self.cliUpdateInProgress = false
+                self.cliUpdateSnapshot = snapshot
+                self.showCLIUpdateResult(results)
+            }
+        }
+    }
+
+    private func showCLIUpdateResult(_ results: [CLICommandResult]) {
+        NSApp.activate(ignoringOtherApps: true)
+        let failures = results.filter { !$0.succeeded }
+        let alert = NSAlert()
+        alert.messageText = failures.isEmpty ? "CLI update complete" : "Some CLI updates failed"
+        alert.informativeText = ProviderID.allCases.map { provider in
+            let result = results.first { $0.provider == provider }
+            let outcome = result?.succeeded == true ? "updated" : "failed"
+            return "\(provider.displayName): \(outcome)\n\(cliVersionLabel(provider))"
+        }.joined(separator: "\n\n")
+        alert.alertStyle = failures.isEmpty ? .informational : .warning
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
 
     @objc private func openLogs() {

@@ -84,6 +84,8 @@ Uninstall removes the ClaudexBar binary, LaunchAgent, app settings, and logs. It
 
 ClaudexBar can switch providers automatically: when both providers are enabled, it watches lightweight local context (foreground app/window text and recent Codex/Claude session-file activity) and switches only after one provider has been the clear winner for a short debounce window. It does not use CPU usage or shell process scans as deciding signals.
 
+The right-click menu can also check and update the installed Claude Code and Codex CLIs. **Daily Auto-update** uses a low-priority macOS LaunchAgent and the CLIs' own `update` commands; turning it off removes only ClaudexBar's updater job. Claude Code may still use its own native auto-updater.
+
 Left-click the pill to cycle between enabled providers. Manual clicks still work in auto mode and temporarily pin your choice so the pill does not jump around while you move between tools. If only one provider is enabled, left-click leaves that provider selected. Right-click for the menu.
 
 The right-click menu lists the two providers, Codex and Claude Code, as 1-click checkbox rows:

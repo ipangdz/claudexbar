@@ -10,6 +10,9 @@ enum AppPaths {
     static let launchAgent: URL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/LaunchAgents/com.ipang.claudexbar.plist")
 
+    static let cliUpdateLaunchAgent: URL = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/LaunchAgents/com.ipang.claudexbar.cli-updater.plist")
+
     static func ensureDirectories() {
         try? FileManager.default.createDirectory(at: applicationSupport, withIntermediateDirectories: true)
         try? FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
