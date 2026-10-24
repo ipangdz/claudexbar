@@ -73,6 +73,10 @@ public enum UsageError: Error, Equatable, Sendable {
     case decoding
     case keychain
     case refreshFailed
+    /// Claude Code's access token has expired and Claude Code has not
+    /// refreshed it yet. ClaudexBar never refreshes Claude Code's token itself
+    /// (that would rotate it out from under Claude Code), so it waits.
+    case awaitingClaudeCodeRefresh
 
     public var statusLabel: String {
         switch self {
@@ -80,6 +84,8 @@ public enum UsageError: Error, Equatable, Sendable {
             return "auth"
         case .network, .rateLimited:
             return "net"
+        case .awaitingClaudeCodeRefresh:
+            return "wait"
         case .server, .decoding, .keychain:
             return "err"
         }
@@ -90,7 +96,7 @@ public enum UsageError: Error, Equatable, Sendable {
     /// the pill to a status word.
     public var isTransient: Bool {
         switch self {
-        case .network, .rateLimited, .server:
+        case .network, .rateLimited, .server, .awaitingClaudeCodeRefresh:
             return true
         case .missingAuth, .authExpired, .refreshFailed, .decoding, .keychain:
             return false
@@ -115,6 +121,8 @@ public enum UsageError: Error, Equatable, Sendable {
             return "Credential lookup failed"
         case .refreshFailed:
             return "Credential refresh failed"
+        case .awaitingClaudeCodeRefresh:
+            return "Waiting for Claude Code to refresh its login"
         }
     }
 }

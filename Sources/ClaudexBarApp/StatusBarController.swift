@@ -10,11 +10,8 @@ final class StatusBarController: NSObject {
     private let smartSwitchDetector = SmartProviderDetector()
     private let providers: [ProviderID: any UsageProvider] = [
         .codex: CodexProvider(),
-        // Persist rotated tokens after every refresh so ClaudexBar's own
-        // credential stays valid without re-login.
-        .claude: ClaudeProvider(persistRefreshed: { credentials in
-            try? ClaudeCredentialStore().save(credentials)
-        })
+        // Follows Claude Code's own login read-only; see ClaudeCredentialReader.
+        .claude: ClaudeProvider()
     ]
 
     private var snapshots: [ProviderID: UsageSnapshot] = [:]
@@ -547,8 +544,10 @@ final class StatusBarController: NSObject {
             .first { FileManager.default.isExecutableFile(atPath: $0.path) }
     }
 
+    /// Signs Claude Code itself back in; ClaudexBar picks the new login up
+    /// on its next refresh.
     private func reauthClaude() {
-        runClaudeReauth()
+        runInTerminal(providers[.claude]?.reauthCommand())
     }
 
     @objc private func toggleLaunchAtLogin() {

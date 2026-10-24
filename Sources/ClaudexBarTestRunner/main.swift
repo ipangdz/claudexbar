@@ -107,6 +107,19 @@ func testClaudeUsageResponseParsingUsesSevenDayFallback() throws {
     try expect(secondary.resetAt == ISO8601DateFormatter.parseClaudexDate("2026-06-08T02:28:55Z"), "Claude secondary reset")
 }
 
+func testClaudeCodeCredentialIsReadOnly() throws {
+    let json = #"{"claudeAiOauth":{"accessToken":"sk-ant-oat01-a","refreshToken":"sk-ant-ort01-b","expiresAt":1}}"#
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("claudexbar-test-\(UUID().uuidString).json")
+    try Data(json.utf8).write(to: url)
+    defer { try? FileManager.default.removeItem(at: url) }
+
+    let reader = ClaudeCredentialReader(keychainServices: [], fallbackURL: url, environment: [:])
+    let credentials = try reader.readCredentials()
+    try expect(credentials.accessToken == "sk-ant-oat01-a", "Claude Code access token read")
+    try expect(credentials.refreshToken == nil, "Claude Code refresh token never handed out")
+    try expect(UsageError.awaitingClaudeCodeRefresh.isTransient, "expired Claude Code token keeps last usage")
+}
+
 func testClaudeCredentialReaderAcceptsOAuthEnvironmentToken() throws {
     let credentials = try ClaudeCredentialReader.credentialsFromEnvironment([
         "CLAUDE_CODE_OAUTH_TOKEN": "Bearer sk-ant-oat01-test-token"
@@ -665,6 +678,7 @@ let tests: [(String, () throws -> Void)] = [
     ("Codex weekly-only usage parsing", testCodexUsageResponseParsingSupportsWeeklyOnlyWindow),
     ("Claude usage response parsing", testClaudeUsageResponseParsingUsesSevenDayFallback),
     ("Claude env OAuth token", testClaudeCredentialReaderAcceptsOAuthEnvironmentToken),
+    ("Claude Code credential read-only", testClaudeCodeCredentialIsReadOnly),
     ("PKCE S256 challenge", testPKCEChallengeMatchesRFC7636Vector),
     ("Pasted code split", testPastedCodeSplitSeparatesCodeAndState),
     ("Authorize URL platform flow", testAuthorizeURLUsesPlatformFlowAndProvenScopes),

@@ -33,7 +33,9 @@ public struct ClaudeProvider: UsageProvider {
             let accessToken: String
             if Self.isExpired(credentials.expiresAt, now: now()) {
                 guard let refreshToken = credentials.refreshToken else {
-                    return .failure(.authExpired)
+                    // Claude Code's token: Claude Code refreshes it the next
+                    // time it runs, and the next fetch re-reads the new one.
+                    return .failure(.awaitingClaudeCodeRefresh)
                 }
                 accessToken = try await refreshAccessToken(refreshToken)
             } else {
@@ -51,7 +53,7 @@ public struct ClaudeProvider: UsageProvider {
     }
 
     public func reauthCommand() -> ShellCommand {
-        ShellCommand("claude", ["setup-token"])
+        ShellCommand("claude", ["auth", "login"])
     }
 
     public static func parseUsageResponse(_ data: Data, fetchedAt: Date) throws -> UsageSnapshot {

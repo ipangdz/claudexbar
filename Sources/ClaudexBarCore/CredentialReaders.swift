@@ -1,5 +1,4 @@
 import Foundation
-import Security
 
 public protocol CodexAuthReading: Sendable {
     func readAccessToken() throws -> String
@@ -46,45 +45,45 @@ public struct ClaudeCredentialReader: ClaudeCredentialReading {
     private let keychainServices: [String]
     private let fallbackURL: URL
     private let environment: [String: String]
-    private let credentialStore: ClaudeCredentialStore
 
     public init(
         keychainServices: [String] = ["Claude Code-credentials"],
         fallbackURL: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/.credentials.json"),
-        environment: [String: String] = ProcessInfo.processInfo.environment,
-        credentialStore: ClaudeCredentialStore = ClaudeCredentialStore()
+        environment: [String: String] = ProcessInfo.processInfo.environment
     ) {
         self.keychainServices = keychainServices
         self.fallbackURL = fallbackURL
         self.environment = environment
-        self.credentialStore = credentialStore
     }
 
+    /// Follows Claude Code's own login, re-read on every fetch, so whatever
+    /// Claude Code currently holds (after an update, /login, or a token
+    /// refresh) is picked up automatically. The refresh token is dropped:
+    /// Claude rotates it on every use, so refreshing here would sign Claude
+    /// Code out. Claude Code stays the only party that refreshes.
     public func readCredentials() throws -> ClaudeCredentials {
         // Explicit override wins for power users.
         if let credentials = try? Self.credentialsFromEnvironment(environment) {
             return credentials
         }
 
-        // ClaudexBar's own OAuth credential (full scopes, with refresh token).
-        if let credentials = credentialStore.load() {
-            return credentials
-        }
-
-        // Fall back to Claude Code's own login if present and still valid.
         for service in keychainServices {
             if let data = keychainData(service: service),
                let credentials = Self.decodeCredentials(data: data) {
-                return credentials
+                return Self.readOnly(credentials)
             }
         }
 
         if let data = try? Data(contentsOf: fallbackURL),
            let credentials = Self.decodeCredentials(data: data) {
-            return credentials
+            return Self.readOnly(credentials)
         }
 
         throw UsageError.missingAuth
+    }
+
+    static func readOnly(_ credentials: ClaudeCredentials) -> ClaudeCredentials {
+        ClaudeCredentials(accessToken: credentials.accessToken, refreshToken: nil, expiresAt: credentials.expiresAt)
     }
 
     public static func credentialsFromEnvironment(_ environment: [String: String]) throws -> ClaudeCredentials {
@@ -123,18 +122,26 @@ public struct ClaudeCredentialReader: ClaudeCredentialReading {
         )
     }
 
+    /// Reads through /usr/bin/security rather than SecItemCopyMatching.
+    /// Claude Code writes this item with the `security` tool, so `security`
+    /// is on the item's access list and the read never triggers a Keychain
+    /// prompt, even after Claude Code rewrites the item.
     private func keychainData(service: String) -> Data? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
-
-        var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
-        guard status == errSecSuccess else { return nil }
-        return item as? Data
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        process.arguments = ["find-generic-password", "-s", service, "-w"]
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = Pipe()
+        do {
+            try process.run()
+        } catch {
+            return nil
+        }
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0, !data.isEmpty else { return nil }
+        return data
     }
 
     private static func decodeHexOrJSONText(_ text: String) -> Data? {
